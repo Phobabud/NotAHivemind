@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package scheduling.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "ClusterManager/api/gen/scheduling/v1;schedulingv1";
+
+service SchedulingCoordinationService {
+  rpc RequestJob(JobRequest) returns (JobResponse);
+  rpc RequestJobStatus(JobStatusRequest) returns (JobStatusResponse);
+  rpc RedistributeRequest(RedistributeRequest) returns (RedistributeResponse);
+}
+
+message JobRequest {
+  int64 cpu_requirement = 1;
+  int64 memory_requirement = 2;
+  optional string image_alias = 3;
+  optional int64 priority = 4;
+  optional bytes payload = 5;
+}
+
+message JobResponse {
+  string job_id = 1;
+  bool accept = 2;
+  string assigned_node_id = 3;
+  string assigned_node_port = 4;
+}
+
+message JobStatusRequest {
+  string job_id = 1;
+}
+
+message JobStatusResponse {
+  string job_id = 1;
+  string status = 2;
+  int32  priority = 3;
+  string image_alias = 4;
+  optional bytes payload = 5;
+}
+
+message RedistributeRequest {
+  string origin_node_id = 1;
+  string job_id = 2;
+  bool gossip = 3;
+  int64 cpu_requirement = 4;
+  int64 memory_requirement = 5;
+  optional string image_alias = 6;
+  optional int64 priority = 7;
+  optional bytes payload = 8;
+}
+
+message RedistributeResponse {
+  string job_id = 1;
+  string assigned_node_id = 2;
+  bool accept = 3;
+}

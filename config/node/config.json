@@ -1,0 +1,7 @@
+{
+  "machine_name": "worker-node-01",
+  "machine_description": "Primary execution node for the east cluster",
+  "scheduler_port": "50051",
+  "log_directory": "./logs/cluster/",
+  "log_verbosity": 2
+}

@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package cluster.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "ClusterManager/api/gen/cluster/v1;clusterv1";
+
+service ClusterService {
+  rpc ClusterStatus(google.protobuf.Empty) returns (ClusterStatusResponse);
+  rpc AppendJob(JobRequest) returns (JobResponse);
+  rpc JobStatus(google.protobuf.Empty) returns (stream JobStatusResponse);
+}
+
+message ClusterStatusResponse {
+  string node_id = 1;
+  string node_address = 2;
+  int64 total_cpu = 3;
+  int64 total_memory = 4;
+  int64 available_cpu = 5;
+  int64 available_memory = 6;
+  repeated string active_job_ids = 7;
+}
+
+message JobRequest {
+  string job_id = 1;
+  int64 cpu_requirement = 2;
+  int64 memory_requirement = 3;
+  string image_alias = 4;
+  int64 priority = 5;
+  bytes payload = 6;
+}
+
+message JobResponse {
+  string job_id = 1;
+  bool accept = 2;
+  string assigned_node_id = 3;
+  string assigned_node_port = 4;
+}
+
+message JobStatusResponse {
+  string job_id = 1;
+  string status = 2;
+  int32 priority = 3;
+  string image_alias = 4;
+  optional bytes payload = 5;
+}

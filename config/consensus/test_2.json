@@ -1,0 +1,15 @@
+{
+  "node_id": "Node-Test-2",
+  "node_port": ":50052",
+  "node_address": "localhost:50052",
+  "consensus_log_directory": "./temp_test/node-test-2/data/",
+  "log_directory": "./temp_test/node-test-2/logs/",
+  "log_verbosity": 2,
+  "log_output_location": "true",
+  "peers": [
+    {
+      "node_id": "Node-Example-1",
+      "node_address": "localhost:50051"
+    }
+  ]
+}

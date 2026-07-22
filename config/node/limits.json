@@ -1,0 +1,4 @@
+{
+  "max_cpu_limit": 8000000000,
+  "max_memory_limit": 17179869184
+}

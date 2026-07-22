@@ -1,0 +1,19 @@
+{
+  "Name": "Example",
+  "ImageName": "imageExample",
+  "Priority": -1,
+  "volumes": [
+    {
+      "type": "bind",
+      "source": "/tmp/cluster/volumes/ml-worker-1",
+      "target": "/app/data"
+    }
+  ],
+  "Args": [
+    "arg1",
+    "arg2"
+  ],
+  "CPULimit": 0,
+  "MemoryLimit": 0,
+  "RequestPort": "8080:80"
+}
