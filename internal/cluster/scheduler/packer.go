@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/golang/glog"
 )
 
 // TODO: limit ctx
@@ -17,7 +19,7 @@ func PackNextJob(ctx context.Context, config core.ConfigLoader, pool core.Contai
 	freeCpu := maxCpu - usedCpu
 	freeMem := maxMem - usedMem
 
-	preprocessCtx, preprocessCancel := context.WithTimeout(ctx, 3*time.Minute)
+	preprocessCtx, preprocessCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer preprocessCancel()
 
 	nextJob := queue.NextBestJob(pool.AvailableImageNames(preprocessCtx), freeCpu, freeMem)
@@ -41,7 +43,7 @@ func PackNextJob(ctx context.Context, config core.ConfigLoader, pool core.Contai
 		if err != nil {
 			return err
 		}
-		pool.TrackedLaunch(preprocessCtx, newContainer.Id())
+		pool.TrackedLaunch(ctx, newContainer.Id())
 		assignedContainer = newContainer
 	}
 
@@ -51,6 +53,20 @@ func PackNextJob(ctx context.Context, config core.ConfigLoader, pool core.Contai
 
 	if err := assignedContainer.AssignJob(nextJob.Id, nextJob.Payload); err != nil {
 		return err
+	}
+
+	glog.V(2).Infof("Assigned job [%s] to container [%s].", nextJob.Id, assignedContainer.Id())
+
+	if !nextJob.Image.Persistent {
+		go func() {
+			payload := assignedContainer.WaitForJobResult(ctx)
+			if err := assignedContainer.FreeJob(); err != nil {
+				return
+			}
+			if err := queue.MarkCompleted(nextJob.Id, payload, true); err != nil {
+				return
+			}
+		}()
 	}
 
 	return nil

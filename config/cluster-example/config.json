@@ -1,0 +1,8 @@
+{
+  "machine_name": "cluster_A",
+  "machine_description": "Primary execution node for the east cluster",
+  "scheduler_port": "50054",
+  "log_directory": "./logdir/cluster_A",
+  "log_verbosity": 2,
+  "job_payload_dir": "./payloaddir/cluster_A"
+}

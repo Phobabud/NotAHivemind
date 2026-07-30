@@ -43,12 +43,13 @@ func NewConn(ctx context.Context, nodeID, address string, state *states.State) (
 	connCtx, cancel := context.WithCancel(ctx)
 
 	c := &Conn{
-		nodeID:  nodeID,
-		address: address,
-		state:   state, // Store the reference to the global state
-		client:  pb.NewClusterServiceClient(grpcConn),
-		conn:    grpcConn,
-		cancel:  cancel,
+		nodeID:    nodeID,
+		address:   address,
+		state:     state, // Store the reference to the global state
+		client:    pb.NewClusterServiceClient(grpcConn),
+		conn:      grpcConn,
+		connected: false,
+		cancel:    cancel,
 	}
 
 	go c.monitorConnection(connCtx)
@@ -76,6 +77,7 @@ func (c *Conn) monitorConnection(ctx context.Context) {
 
 	// Prompt the gRPC client to immediately start connection attempts
 	c.conn.Connect()
+	glog.V(1).Infof("Connected to cluster [%s]", c.nodeID)
 
 	for {
 		currentState := c.conn.GetState()
@@ -125,9 +127,9 @@ func (c *Conn) FetchClusterStatus(ctx context.Context) (*Status, error) {
 	return ParseClusterStatus(resp), nil
 }
 
-// DispatchJob enforces strict data validation before sending scheduling intents over the wire.
+// DispatchJob enforces strict data validation before sending scheduler intents over the wire.
 // It accepts a core.Job domain model and handles the translation internally.
-func (c *Conn) DispatchJob(ctx context.Context, job core.Job) (bool, error) {
+func (c *Conn) DispatchJob(ctx context.Context, job *core.Job) (bool, error) {
 	if !c.Connection() {
 		return false, fmt.Errorf("cannot dispatch job %s: cluster %s is offline", job.Id, c.nodeID)
 	}
@@ -138,14 +140,14 @@ func (c *Conn) DispatchJob(ctx context.Context, job core.Job) (bool, error) {
 	if job.ImageAlias == "" {
 		return false, fmt.Errorf("malformed request: image alias cannot be empty for job %s", job.Id)
 	}
-	if job.CPULimit <= 0 || job.MemoryLimit <= 0 {
+	if job.CPURequirement <= 0 || job.MemoryRequirement <= 0 {
 		return false, fmt.Errorf("malformed request: CPU and Memory requirements must be > 0 for job %s", job.Id)
 	}
 
 	req := &pb.JobRequest{
 		JobId:             job.Id,
-		CpuRequirement:    job.CPULimit,
-		MemoryRequirement: job.MemoryLimit,
+		CpuRequirement:    job.CPURequirement,
+		MemoryRequirement: job.MemoryRequirement,
 		ImageAlias:        job.ImageAlias,
 		Priority:          int64(job.Priority),
 		Payload:           job.Payload,
@@ -214,7 +216,7 @@ func (c *Conn) monitorJobStatuses(ctx context.Context) {
 				if err != nil {
 					glog.Errorf("Failed to process job completion for %s: %v", event.JobID, err)
 				} else {
-					glog.Infof("Job %s processed successfully (Status: %s)", event.JobID, event.Status)
+					glog.V(2).Infof("Job %s processed successfully (Status: %s)", event.JobID, event.Status)
 				}
 			}
 		}

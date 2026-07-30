@@ -11,6 +11,7 @@ type Machine struct {
 	SchedulerPort      string `json:"scheduler_port"`
 	LogDirectory       string `json:"log_directory"`
 	LogVerbosity       int    `json:"log_verbosity"`
+	JobPayloadDir      string `json:"job_payload_dir"`
 	Limits             *Limits
 	Images             Images
 }

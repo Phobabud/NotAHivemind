@@ -9,7 +9,6 @@ package consensusv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	_ "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -253,7 +252,7 @@ func (x *AppendRequest) GetPayload() []byte {
 type AppendResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Status        int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"` // 1 = Success, 2 = Bad Payload or OriginID, 3 = Needs Snapshot Install
+	Status        int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"` // 1 = Success, 2 = Bad Payload or OriginID, 3 = Needs Snapshot Install / Failed to get consensus
 	PrevLogTerm   int64                  `protobuf:"varint,3,opt,name=prev_log_term,json=prevLogTerm,proto3" json:"prev_log_term,omitempty"`
 	PrevLogIndex  int64                  `protobuf:"varint,4,opt,name=prev_log_index,json=prevLogIndex,proto3" json:"prev_log_index,omitempty"`
 	LeaderAddress string                 `protobuf:"bytes,5,opt,name=leader_address,json=leaderAddress,proto3" json:"leader_address,omitempty"`
@@ -394,6 +393,126 @@ func (x *RawAppendRequest) GetPayload() []byte {
 	return nil
 }
 
+type GetDataRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	OriginNodeId     string                 `protobuf:"bytes,1,opt,name=origin_node_id,json=originNodeId,proto3" json:"origin_node_id,omitempty"`
+	SchedulerIdQuery *string                `protobuf:"bytes,2,opt,name=scheduler_id_query,json=schedulerIdQuery,proto3,oneof" json:"scheduler_id_query,omitempty"`
+	PayloadIdQuery   *string                `protobuf:"bytes,3,opt,name=payload_id_query,json=payloadIdQuery,proto3,oneof" json:"payload_id_query,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *GetDataRequest) Reset() {
+	*x = GetDataRequest{}
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDataRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDataRequest) ProtoMessage() {}
+
+func (x *GetDataRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDataRequest.ProtoReflect.Descriptor instead.
+func (*GetDataRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_consensus_v1_consensus_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetDataRequest) GetOriginNodeId() string {
+	if x != nil {
+		return x.OriginNodeId
+	}
+	return ""
+}
+
+func (x *GetDataRequest) GetSchedulerIdQuery() string {
+	if x != nil && x.SchedulerIdQuery != nil {
+		return *x.SchedulerIdQuery
+	}
+	return ""
+}
+
+func (x *GetDataRequest) GetPayloadIdQuery() string {
+	if x != nil && x.PayloadIdQuery != nil {
+		return *x.PayloadIdQuery
+	}
+	return ""
+}
+
+type GetDataResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OriginNodeId  string                 `protobuf:"bytes,1,opt,name=origin_node_id,json=originNodeId,proto3" json:"origin_node_id,omitempty"`
+	Exists        bool                   `protobuf:"varint,2,opt,name=exists,proto3" json:"exists,omitempty"`
+	Payloads      [][]byte               `protobuf:"bytes,3,rep,name=payloads,proto3" json:"payloads,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDataResponse) Reset() {
+	*x = GetDataResponse{}
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDataResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDataResponse) ProtoMessage() {}
+
+func (x *GetDataResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDataResponse.ProtoReflect.Descriptor instead.
+func (*GetDataResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_consensus_v1_consensus_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetDataResponse) GetOriginNodeId() string {
+	if x != nil {
+		return x.OriginNodeId
+	}
+	return ""
+}
+
+func (x *GetDataResponse) GetExists() bool {
+	if x != nil {
+		return x.Exists
+	}
+	return false
+}
+
+func (x *GetDataResponse) GetPayloads() [][]byte {
+	if x != nil {
+		return x.Payloads
+	}
+	return nil
+}
+
 type InstallSnapshotRequest struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	LeaderId          string                 `protobuf:"bytes,1,opt,name=leader_id,json=leaderId,proto3" json:"leader_id,omitempty"`
@@ -409,7 +528,7 @@ type InstallSnapshotRequest struct {
 
 func (x *InstallSnapshotRequest) Reset() {
 	*x = InstallSnapshotRequest{}
-	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[5]
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -421,7 +540,7 @@ func (x *InstallSnapshotRequest) String() string {
 func (*InstallSnapshotRequest) ProtoMessage() {}
 
 func (x *InstallSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[5]
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -434,7 +553,7 @@ func (x *InstallSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstallSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*InstallSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_consensus_v1_consensus_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_consensus_v1_consensus_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *InstallSnapshotRequest) GetLeaderId() string {
@@ -495,7 +614,7 @@ type InstallSnapshotResponse struct {
 
 func (x *InstallSnapshotResponse) Reset() {
 	*x = InstallSnapshotResponse{}
-	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[6]
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +626,7 @@ func (x *InstallSnapshotResponse) String() string {
 func (*InstallSnapshotResponse) ProtoMessage() {}
 
 func (x *InstallSnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[6]
+	mi := &file_api_proto_consensus_v1_consensus_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +639,7 @@ func (x *InstallSnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstallSnapshotResponse.ProtoReflect.Descriptor instead.
 func (*InstallSnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_consensus_v1_consensus_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_consensus_v1_consensus_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *InstallSnapshotResponse) GetTerm() int64 {
@@ -534,7 +653,7 @@ var File_api_proto_consensus_v1_consensus_proto protoreflect.FileDescriptor
 
 const file_api_proto_consensus_v1_consensus_proto_rawDesc = "" +
 	"\n" +
-	"&api/proto/consensus/v1/consensus.proto\x12\fconsensus.v1\x1a\x1bgoogle/protobuf/empty.proto\"\x93\x01\n" +
+	"&api/proto/consensus/v1/consensus.proto\x12\fconsensus.v1\"\x93\x01\n" +
 	"\vVoteRequest\x12$\n" +
 	"\x0eorigin_node_id\x18\x01 \x01(\tR\foriginNodeId\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\x05R\x04type\x12\x12\n" +
@@ -566,7 +685,17 @@ const file_api_proto_consensus_v1_consensus_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x02 \x01(\tR\trequestId\x12!\n" +
 	"\fscheduler_id\x18\x03 \x01(\tR\vschedulerId\x12\x18\n" +
-	"\apayload\x18\x04 \x01(\fR\apayload\"\xe7\x01\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\"\xc4\x01\n" +
+	"\x0eGetDataRequest\x12$\n" +
+	"\x0eorigin_node_id\x18\x01 \x01(\tR\foriginNodeId\x121\n" +
+	"\x12scheduler_id_query\x18\x02 \x01(\tH\x00R\x10schedulerIdQuery\x88\x01\x01\x12-\n" +
+	"\x10payload_id_query\x18\x03 \x01(\tH\x01R\x0epayloadIdQuery\x88\x01\x01B\x15\n" +
+	"\x13_scheduler_id_queryB\x13\n" +
+	"\x11_payload_id_query\"k\n" +
+	"\x0fGetDataResponse\x12$\n" +
+	"\x0eorigin_node_id\x18\x01 \x01(\tR\foriginNodeId\x12\x16\n" +
+	"\x06exists\x18\x02 \x01(\bR\x06exists\x12\x1a\n" +
+	"\bpayloads\x18\x03 \x03(\fR\bpayloads\"\xe7\x01\n" +
 	"\x16InstallSnapshotRequest\x12\x1b\n" +
 	"\tleader_id\x18\x01 \x01(\tR\bleaderId\x12\x12\n" +
 	"\x04term\x18\x02 \x01(\x03R\x04term\x12.\n" +
@@ -576,11 +705,12 @@ const file_api_proto_consensus_v1_consensus_proto_rawDesc = "" +
 	"\x04data\x18\x06 \x01(\fR\x04data\x12\x12\n" +
 	"\x04done\x18\a \x01(\bR\x04done\"-\n" +
 	"\x17InstallSnapshotResponse\x12\x12\n" +
-	"\x04term\x18\x01 \x01(\x03R\x04term2\xde\x02\n" +
+	"\x04term\x18\x01 \x01(\x03R\x04term2\xa6\x03\n" +
 	"\x1cConsensusCoordinationService\x12D\n" +
 	"\vRequestVote\x12\x19.consensus.v1.VoteRequest\x1a\x1a.consensus.v1.VoteResponse\x12J\n" +
 	"\rAppendEntries\x12\x1b.consensus.v1.AppendRequest\x1a\x1c.consensus.v1.AppendResponse\x12L\n" +
-	"\fClientAppend\x12\x1e.consensus.v1.RawAppendRequest\x1a\x1c.consensus.v1.AppendResponse\x12^\n" +
+	"\fClientAppend\x12\x1e.consensus.v1.RawAppendRequest\x1a\x1c.consensus.v1.AppendResponse\x12F\n" +
+	"\aGetData\x12\x1c.consensus.v1.GetDataRequest\x1a\x1d.consensus.v1.GetDataResponse\x12^\n" +
 	"\x0fInstallSnapshot\x12$.consensus.v1.InstallSnapshotRequest\x1a%.consensus.v1.InstallSnapshotResponseB1Z/ClusterManager/api/gen/consensus/v1;consensusv1b\x06proto3"
 
 var (
@@ -595,27 +725,31 @@ func file_api_proto_consensus_v1_consensus_proto_rawDescGZIP() []byte {
 	return file_api_proto_consensus_v1_consensus_proto_rawDescData
 }
 
-var file_api_proto_consensus_v1_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_api_proto_consensus_v1_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_api_proto_consensus_v1_consensus_proto_goTypes = []any{
 	(*VoteRequest)(nil),             // 0: consensus.v1.VoteRequest
 	(*VoteResponse)(nil),            // 1: consensus.v1.VoteResponse
 	(*AppendRequest)(nil),           // 2: consensus.v1.AppendRequest
 	(*AppendResponse)(nil),          // 3: consensus.v1.AppendResponse
 	(*RawAppendRequest)(nil),        // 4: consensus.v1.RawAppendRequest
-	(*InstallSnapshotRequest)(nil),  // 5: consensus.v1.InstallSnapshotRequest
-	(*InstallSnapshotResponse)(nil), // 6: consensus.v1.InstallSnapshotResponse
+	(*GetDataRequest)(nil),          // 5: consensus.v1.GetDataRequest
+	(*GetDataResponse)(nil),         // 6: consensus.v1.GetDataResponse
+	(*InstallSnapshotRequest)(nil),  // 7: consensus.v1.InstallSnapshotRequest
+	(*InstallSnapshotResponse)(nil), // 8: consensus.v1.InstallSnapshotResponse
 }
 var file_api_proto_consensus_v1_consensus_proto_depIdxs = []int32{
 	0, // 0: consensus.v1.ConsensusCoordinationService.RequestVote:input_type -> consensus.v1.VoteRequest
 	2, // 1: consensus.v1.ConsensusCoordinationService.AppendEntries:input_type -> consensus.v1.AppendRequest
 	4, // 2: consensus.v1.ConsensusCoordinationService.ClientAppend:input_type -> consensus.v1.RawAppendRequest
-	5, // 3: consensus.v1.ConsensusCoordinationService.InstallSnapshot:input_type -> consensus.v1.InstallSnapshotRequest
-	1, // 4: consensus.v1.ConsensusCoordinationService.RequestVote:output_type -> consensus.v1.VoteResponse
-	3, // 5: consensus.v1.ConsensusCoordinationService.AppendEntries:output_type -> consensus.v1.AppendResponse
-	3, // 6: consensus.v1.ConsensusCoordinationService.ClientAppend:output_type -> consensus.v1.AppendResponse
-	6, // 7: consensus.v1.ConsensusCoordinationService.InstallSnapshot:output_type -> consensus.v1.InstallSnapshotResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
+	5, // 3: consensus.v1.ConsensusCoordinationService.GetData:input_type -> consensus.v1.GetDataRequest
+	7, // 4: consensus.v1.ConsensusCoordinationService.InstallSnapshot:input_type -> consensus.v1.InstallSnapshotRequest
+	1, // 5: consensus.v1.ConsensusCoordinationService.RequestVote:output_type -> consensus.v1.VoteResponse
+	3, // 6: consensus.v1.ConsensusCoordinationService.AppendEntries:output_type -> consensus.v1.AppendResponse
+	3, // 7: consensus.v1.ConsensusCoordinationService.ClientAppend:output_type -> consensus.v1.AppendResponse
+	6, // 8: consensus.v1.ConsensusCoordinationService.GetData:output_type -> consensus.v1.GetDataResponse
+	8, // 9: consensus.v1.ConsensusCoordinationService.InstallSnapshot:output_type -> consensus.v1.InstallSnapshotResponse
+	5, // [5:10] is the sub-list for method output_type
+	0, // [0:5] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -626,13 +760,14 @@ func file_api_proto_consensus_v1_consensus_proto_init() {
 	if File_api_proto_consensus_v1_consensus_proto != nil {
 		return
 	}
+	file_api_proto_consensus_v1_consensus_proto_msgTypes[5].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_consensus_v1_consensus_proto_rawDesc), len(file_api_proto_consensus_v1_consensus_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

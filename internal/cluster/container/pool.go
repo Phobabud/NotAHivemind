@@ -6,10 +6,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/client"
+	"github.com/golang/glog"
 )
 
 type Containers struct {
@@ -17,19 +21,20 @@ type Containers struct {
 	mutex       sync.Mutex
 	ErrorStream chan error
 
-	client *client.Client
-	logger *filehandler.LogWriter
-	// TODO add payload volumes
+	client     *client.Client
+	logger     *filehandler.LogWriter
+	payloadDir string
 }
 
 // CreateContainerHandler creates a clean Containers struct given a function which acts like a destination for the error stream
-func CreateContainerHandler(client *client.Client, logger *filehandler.LogWriter, errDestination func(err error)) core2.ContainerPool {
+func CreateContainerHandler(client *client.Client, logger *filehandler.LogWriter, payloadDir string, errDestination func(err error)) core2.ContainerPool {
 	containers := &Containers{
 		Containers:  make([]*Container, 0),
 		mutex:       sync.Mutex{},
 		ErrorStream: make(chan error),
 		client:      client,
 		logger:      logger,
+		payloadDir:  payloadDir,
 	}
 	go func() { // Automatically shuts down when Close() is called
 		for err := range containers.ErrorStream {
@@ -44,6 +49,19 @@ func (c *Containers) Close(ctx context.Context) error {
 		return err
 	}
 	close(c.ErrorStream)
+
+	entries, err := os.ReadDir(c.payloadDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		entryPath := filepath.Join(c.payloadDir, entry.Name())
+		err := os.RemoveAll(entryPath)
+		if err != nil {
+			glog.Errorf("failed to remove container directory %s: %s", entryPath, err)
+		}
+	}
+
 	return nil
 }
 
@@ -54,15 +72,21 @@ func (c *Containers) DestroyAll(ctx context.Context) error {
 	c.mutex.Unlock()
 
 	var errs []string
+	wg := sync.WaitGroup{}
 	for _, container := range tracked {
 		if container == nil || container.id == "" {
 			continue
 		}
 
-		if err := container.Delete(ctx); err != nil {
-			errs = append(errs, err.Error())
-		}
+		go func() {
+			wg.Add(1)
+			defer wg.Done()
+			if err := container.Delete(ctx); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}()
 	}
+	wg.Wait()
 
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to destroy tracked containers: %s", strings.Join(errs, "; "))
@@ -94,7 +118,7 @@ func (c *Containers) AddFromImage(image *core2.Image) (core2.ContainerAPI, error
 	if err != nil {
 		return nil, err
 	}
-	container := NewContainer(c.client, c.logger, image, fmt.Sprintf("localhost:%d", port)) // TODO upgrade
+	container := NewContainer(c.client, c.logger, image, c.payloadDir, fmt.Sprintf("localhost:%d", port))
 	if _, err := container.Init(context.Background(), image.Args...); err != nil {
 		return nil, err
 	}
@@ -256,6 +280,19 @@ func (c *Containers) UsedSpace() (int64, int64) {
 		memoryTotal += container.memLimit
 	}
 	return nanoCpuTotal, memoryTotal
+}
+
+func (c *Containers) Ping() bool {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Ping the Docker daemon
+	if _, err := c.client.Ping(ctx); err != nil {
+		return false
+	}
+	return true
 }
 
 // GetFreePort requests the system for an unused IPv6 port

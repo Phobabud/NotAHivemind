@@ -72,6 +72,9 @@ type ContainerPool interface {
 
 	// Len returns the amount of registered/tracked containers
 	Len() int
+
+	// Ping checks to see if the docker daemon is online
+	Ping() bool
 }
 
 // ContainerAPI defines what the scheduler is allowed to do to an individual container.
@@ -111,6 +114,7 @@ type ContainerAPI interface {
 	*/
 
 	AssignJob(jobID string, payload json.RawMessage) error
+	WaitForJobResult(ctx context.Context) json.RawMessage
 	FreeJob() error
 	HasJob() bool
 	JobID() string

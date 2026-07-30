@@ -29,7 +29,8 @@ var (
 	cancel context.CancelFunc
 	cli    *client.Client
 
-	logger filehandler.LogWriter
+	nodeServer *service.ClusterServer
+	logger     filehandler.LogWriter
 
 	containers core.ContainerPool
 	jobQueue   core.JobQueue
@@ -38,19 +39,24 @@ var (
 func init() {
 	var err error
 	// Node Env
-	env, err = config.ImportEnvironment("", "", "")
+	configFile := flag.String("test_config", "test_config.json", "Path to the cluster configuration file")
+	limitsFile := flag.String("limits", "limits.json", "Path to the limits file")
+	imagesDir := flag.String("images", "images/", "Path to the images directory")
+	flag.Parse()
+	env, err = config.ImportEnvironment(*configFile, *limitsFile, *imagesDir)
 	if err != nil {
 		panic(err)
 	}
 
 	// Logging
-	file, err := os.OpenFile("logs/application.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(env.LogDirectory+"/application.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
 	}
 	log.SetOutput(file)
 
-	if err := flag.Set("logtostderr", "false"); err != nil {
+	// TODO change back to false after testing
+	if err := flag.Set("logtostderr", "true"); err != nil {
 		log.Fatalf("Failed to set logtostderr flag: %v", err)
 	}
 	if err := flag.Set("log_dir", env.LogDirectory); err != nil {
@@ -66,29 +72,44 @@ func init() {
 		log.Fatalf("%v", err)
 	}
 
-	logger = filehandler.NewLogWriter("logs/containers/", 0660, 100)
+	logger, err = filehandler.NewLogWriter(env.LogDirectory+"/containers", 0660, 100)
+	if err != nil {
+		glog.Fatalf("Failed to initialize logger: %v", err)
+	}
 
-	containers = container.CreateContainerHandler(cli, &logger, nil)
+	containers = container.CreateContainerHandler(cli, &logger, env.JobPayloadDir, func(err error) { glog.Errorf("Container error: %v", err) })
 	jobQueue = scheduler.CreateJobsQueue()
 }
 
 func main() {
 	// Set up context
 	defer cancel()
-	defer jobQueue.Close()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		glog.Warningf("Received shutdown signal. Initiating graceful shutdown...")
 		cancel()
+
+		glog.V(3).Infof("Shutting down jobQueue")
+		jobQueue.Close()
+		glog.V(3).Infof("Shutting down gRPC server")
+		nodeServer.Stop()
+		glog.V(3).Infof("Shutting down Docker containers")
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		if err := containers.Close(cleanupCtx); err != nil {
+			glog.Errorf("Error shutting down containers during server shutdown: %v", err)
+		}
+		glog.V(3).Infof("Shutting down logger")
+		logger.Close()
 	}()
 
 	statusCh := make(chan *core.Job, 100)
 	go jobQueue.StreamCompleted(statusCh)
+	go logger.AsyncWrite()
 
-	nodeServer := service.NewClusterServer(
+	nodeServer = service.NewClusterServer(
 		env.MachineName,
 		":"+env.SchedulerPort,
 		env.Limits.MaxCPULimit,
@@ -104,6 +125,7 @@ func main() {
 			glog.Fatalf("Cluster Server failed: %v", err)
 		}
 	}()
+	go nodeServer.MonitorConnection(ctx)
 	defer nodeServer.Stop()
 
 	go func() {
@@ -112,8 +134,9 @@ func main() {
 		}
 	}()
 
+	glog.V(1).Infof("Cluster Node [%s] Listening on [%s]", env.MachineName, env.SchedulerPort)
 	<-ctx.Done()
-	glog.Info("Shutdown complete.")
+	glog.V(1).Info("Shutdown signal received, gracefully stopping...")
 }
 
 func packJobs() error {

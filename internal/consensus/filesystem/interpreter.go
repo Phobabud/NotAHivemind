@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"ClusterManager/internal/consensus/core"
+	"ClusterManager/internal/models"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -11,25 +12,14 @@ import (
 	"slices"
 )
 
-type Payload struct {
-	JobID    string          `json:"job_id"`
-	State    Status          `json:"state"`
-	Image    string          `json:"image"`
-	Priority int             `json:"priority"`
-	Payload  json.RawMessage `json:"payload"`
+// genericPayload helps us peek at the JSON to determine its type without unmarshaling the whole thing.
+type genericPayload struct {
+	ID    string         `json:"id"`
+	State *models.Status `json:"state,omitempty"` // If State is present, it's a Job.
+	Entry *string        `json:"entry,omitempty"` // If Entry is present, it's a Scheduler event.
 }
 
-type Status int
-
-const (
-	Pending Status = iota
-	Running
-	Completed
-	Failed
-)
-
 // encodeLogEntry packs a LogEntry into a length-prefixed binary byte slice.
-// This is used by both the WAL appender and the Snapshot manager.
 func encodeLogEntry(entry *LogEntry) []byte {
 	masterIDLen := len(entry.SchedulerID)
 
@@ -57,25 +47,20 @@ func decodeLogEntry(data []byte) (*LogEntry, error) {
 
 	entrySize := binary.LittleEndian.Uint32(data[0:4])
 
-	// Calculate and verify minimum structural size
-	// (8 bytes Index + 8 bytes Term + 2 bytes MasterIDLen = 18 bytes)
 	if entrySize < 18 {
 		return nil, core.ErrCorruptedLogData
 	}
 
-	// Verify the provided byte slice contains the full expected length-prefixed data
 	if uint32(len(data)) < 4+entrySize {
 		return nil, core.ErrCorruptedLogData
 	}
 
 	masterIDLen := binary.LittleEndian.Uint16(data[20:22])
-	// Ensure the parsed masterID length doesn't overflow our overall entry limits
 	if uint32(18+masterIDLen) > entrySize {
 		return nil, core.ErrCorruptedLogData
 	}
 	masterID := string(data[22 : 22+masterIDLen])
 
-	// Secure offset arithmetic and slice isolation for the payload
 	payloadOffset := 22 + int(masterIDLen)
 	payloadSize := int(entrySize) - (18 + int(masterIDLen))
 
@@ -90,30 +75,51 @@ func decodeLogEntry(data []byte) (*LogEntry, error) {
 	return entry, nil
 }
 
-// createSnapshot uses the struct form of the payload to determine what makes it into a compressed snapshot
+// createSnapshot analyzes payloads to discard completed jobs and duplicate entries, creating a compressed log state.
 func createSnapshot(data []*LogEntry) []*LogEntry {
 	snapshots := make(map[string]*LogEntry)
 	excluded := make(map[string]bool)
 
+	// Iterate backwards to always find the most recent state of a specific ID first
 	for i := len(data) - 1; i >= 0; i-- {
-		var dataPoint Payload
-		if err := json.Unmarshal(data[i].Payload, &dataPoint); err != nil {
-			continue
-		}
-		jobID := dataPoint.JobID
-
-		if excluded[jobID] {
+		var peek genericPayload
+		if err := json.Unmarshal(data[i].Payload, &peek); err != nil {
+			// If it's malformed, keep it in the snapshot for the state machine to handle/reject
+			snapshots[fmt.Sprintf("raw-%d", data[i].Index)] = data[i]
 			continue
 		}
 
-		if dataPoint.State == Completed || dataPoint.State == Failed {
-			excluded[jobID] = true
-			delete(snapshots, jobID)
+		id := peek.ID
+		if id == "" {
+			continue // Skip empty IDs to avoid key collisions
+		}
+
+		if excluded[id] {
 			continue
 		}
 
-		if _, exists := snapshots[jobID]; !exists {
-			snapshots[jobID] = data[i]
+		// JobPayload
+		if peek.State != nil {
+			if *peek.State == models.Completed || *peek.State == models.Failed {
+				excluded[id] = true
+				delete(snapshots, id) // Purge from map if we found a prior pending state
+				continue
+			}
+
+			// Only keep the most recent pending/running state for this job ID
+			if _, exists := snapshots[id]; !exists {
+				snapshots[id] = data[i]
+			}
+			continue
+		}
+
+		// SchedulerPayload
+		if peek.Entry != nil {
+			// Only keep the most recent log entry/heartbeat for this specific scheduler ID
+			if _, exists := snapshots[id]; !exists {
+				snapshots[id] = data[i]
+			}
+			continue
 		}
 	}
 
@@ -129,7 +135,7 @@ func readLogEntries(r io.Reader) ([]*LogEntry, int64, error) {
 		header := make([]byte, 4)
 		_, err := io.ReadFull(r, header)
 		if err == io.EOF {
-			break // Cleanly reached the end of the stream
+			break
 		}
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to read log header: %w", err)
@@ -137,7 +143,7 @@ func readLogEntries(r io.Reader) ([]*LogEntry, int64, error) {
 
 		entrySize := binary.LittleEndian.Uint32(header)
 		buf := make([]byte, 4+entrySize)
-		copy(buf[:4], header) // Preserve the header for the decoder
+		copy(buf[:4], header)
 
 		if _, err := io.ReadFull(r, buf[4:]); err != nil {
 			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {

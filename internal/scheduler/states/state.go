@@ -1,33 +1,49 @@
 package states
 
 import (
+	"ClusterManager/internal/models"
 	"ClusterManager/internal/scheduler/core"
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type State struct {
 	id      string
 	address string
 
-	jobs map[string]core.Job
+	jobs map[string]*core.Job
 
 	unassignedJobs map[string]struct{}
 	assignedJobs   map[string]struct{}
 	completedJobs  map[string]struct{}
 
+	clusters map[string]*ClusterState
+	peers    []*SchedulerState
+
 	mu sync.RWMutex
+}
+
+type ClusterStats struct {
+	ClusterID   string
+	CPUUsage    int64
+	MemUsage    int64
+	TotalCPU    int64
+	TotalMem    int64
+	LastUpdated time.Time
 }
 
 func NewState(id string, address string) *State {
 	return &State{
 		id:             id,
 		address:        address,
-		jobs:           make(map[string]core.Job),
+		jobs:           make(map[string]*core.Job),
 		unassignedJobs: make(map[string]struct{}),
 		assignedJobs:   make(map[string]struct{}),
 		completedJobs:  make(map[string]struct{}),
+		clusters:       make(map[string]*ClusterState),
+		peers:          make([]*SchedulerState, 0),
 	}
 }
 
@@ -43,10 +59,10 @@ func (s *State) Address() string {
 	return s.address
 }
 
-func (s *State) AppendJob(job core.Job) {
+func (s *State) AppendJob(job *core.Job) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	job.Status = core.Pending
+	job.Status = models.Pending
 	s.jobs[job.Id] = job
 	s.unassignedJobs[job.Id] = struct{}{}
 }
@@ -64,8 +80,7 @@ func (s *State) AssignJob(jobId string, clusterId string) error {
 
 	job := s.jobs[jobId]
 	job.AssignedClusterId = clusterId
-	job.Status = core.Running
-	s.jobs[jobId] = job
+	job.Status = models.Running
 	return nil
 }
 
@@ -82,9 +97,9 @@ func (s *State) CompleteJob(jobId string, result json.RawMessage, success bool) 
 
 	job := s.jobs[jobId]
 	if success {
-		job.Status = core.Completed
+		job.Status = models.Completed
 	} else {
-		job.Status = core.Failed
+		job.Status = models.Failed
 	}
 	job.Response = result
 	s.jobs[jobId] = job
@@ -105,7 +120,7 @@ func (s *State) UnassignJob(jobId string) {
 	s.unassignedJobs[jobId] = struct{}{}
 
 	job := s.jobs[jobId]
-	job.Status = core.Pending
+	job.Status = models.Pending
 	job.Response = nil
 	job.AssignedClusterId = ""
 	s.jobs[jobId] = job
@@ -137,4 +152,23 @@ func (s *State) JobsInCluster(clusterId string) []string {
 		}
 	}
 	return jobsInCluster
+}
+
+func (s *State) Job(jobId string) (*core.Job, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if job, ok := s.jobs[jobId]; ok {
+		return job, nil
+	}
+	return nil, fmt.Errorf("job with ID %s not found", jobId)
+}
+
+func (s *State) PendingJobs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var pendingJobs []string
+	for id := range s.unassignedJobs {
+		pendingJobs = append(pendingJobs, id)
+	}
+	return pendingJobs
 }

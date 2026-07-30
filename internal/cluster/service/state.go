@@ -3,6 +3,7 @@ package service
 import (
 	pb "ClusterManager/api/gen/cluster/v1"
 	"context"
+	"time"
 
 	"github.com/golang/glog"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -10,6 +11,7 @@ import (
 
 // ClusterStatus acts as the snapshot heartbeat. It calculates available resources on the fly.
 func (s *ClusterServer) ClusterStatus(ctx context.Context, _ *emptypb.Empty) (*pb.ClusterStatusResponse, error) {
+	s.lastContactFromScheduler = time.Now()
 	usedCPU, usedMem := s.containers.UsedSpace()
 	activeJobs := s.jobQueue.ActiveJobs()
 
@@ -18,7 +20,6 @@ func (s *ClusterServer) ClusterStatus(ctx context.Context, _ *emptypb.Empty) (*p
 	for _, job := range activeJobs {
 		activeJobIDs = append(activeJobIDs, job.Id)
 	}
-
 	return &pb.ClusterStatusResponse{
 		NodeId:          s.nodeID,
 		NodeAddress:     s.nodeAddress,
@@ -32,17 +33,17 @@ func (s *ClusterServer) ClusterStatus(ctx context.Context, _ *emptypb.Empty) (*p
 
 // JobStatus streams terminal events (Completed/Failed) back to the connected Scheduler.
 func (s *ClusterServer) JobStatus(_ *emptypb.Empty, stream pb.ClusterService_JobStatusServer) error {
-	glog.Infof("Scheduler connected to JobStatus event stream.")
+	glog.V(1).Infof("Scheduler connected to JobStatus event stream.")
 
 	for {
 		select {
 		case <-stream.Context().Done():
-			glog.Infof("Scheduler disconnected from JobStatus stream.")
+			glog.V(1).Infof("Scheduler disconnected from JobStatus stream.")
 			return stream.Context().Err()
 
 		case job, ok := <-s.statusCh:
 			if !ok {
-				glog.Infof("Internal status channel closed. Shutting down stream.")
+				glog.V(1).Infof("Internal status channel closed. Shutting down stream.")
 				return nil
 			}
 
@@ -65,7 +66,7 @@ func (s *ClusterServer) JobStatus(_ *emptypb.Empty, stream pb.ClusterService_Job
 				return err
 			}
 
-			glog.Infof("Pushed %s event for job %s to Scheduler.", success, job.Id)
+			glog.V(2).Infof("Pushed %s event for job %s to Scheduler.", success, job.Id)
 		}
 	}
 }

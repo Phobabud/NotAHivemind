@@ -2,6 +2,7 @@ package container
 
 import (
 	"ClusterManager/internal/cluster/core"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -44,7 +45,7 @@ func (c *Container) AssignJob(jobId string, payload json.RawMessage) error {
 		return fmt.Errorf("container %s has already been occupied", c.id)
 	}
 
-	payloadDir := filepath.Join(c.payloadLocation, "payload")
+	payloadDir := filepath.Join(c.payloadLocation, c.id, "payload")
 	if err := os.MkdirAll(payloadDir, 0755); err != nil {
 		return fmt.Errorf("failed to create payload directory: %w", err)
 	}
@@ -78,6 +79,17 @@ func (c *Container) AssignJob(jobId string, payload json.RawMessage) error {
 	c.lastAssignedJob = time.Now()
 
 	return nil
+}
+
+func (c *Container) WaitForJobResult(ctx context.Context) json.RawMessage {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case result := <-c.JobsResultsChan:
+			return result
+		}
+	}
 }
 
 func (c *Container) FreeJob() error {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/golang/glog"
 )
 
 func (c *Container) Health(ctx context.Context) (int, error) {
@@ -65,7 +65,7 @@ func (c *Container) Usage(ctx context.Context) (float64, uint64, error) {
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil { // Can't do much about this here. It might have already been closed
-			log.Printf("Error closing stats body: %v", err)
+			glog.Errorf("Error closing stats body: %v", err)
 		}
 	}(stats.Body)
 
@@ -165,7 +165,7 @@ func processAndDeleteFile(filePath string) (json.RawMessage, error) {
 	if err := os.Remove(filePath); err != nil {
 		return nil, fmt.Errorf("failed to delete file: %w", err)
 	}
-	fmt.Printf("Safely deleted file: %s\n", filepath.Base(filePath))
+	glog.V(3).Infof("Safely deleted file: %s", filepath.Base(filePath))
 
 	return rawJSONMsg, nil
 }
@@ -180,6 +180,9 @@ func (c *Container) streamContainerLogs(ctx context.Context) error {
 
 	out, err := c.client.ContainerLogs(ctx, c.dockerID, options)
 	if err != nil {
+		if strings.Contains(err.Error(), "context canceled") {
+			return nil
+		}
 		return fmt.Errorf("error opening log stream: %v", err)
 	}
 	defer out.Close()
@@ -191,7 +194,7 @@ func (c *Container) streamContainerLogs(ctx context.Context) error {
 	}
 
 	c.logger.Add(logHeader, logName)
-	// Keep the file "Open" in the LogWriter until this function exits
+	defer c.logger.FreeFile(logName)
 
 	// Bridge Docker to LogWriter directly
 	bridge := &logBridge{
@@ -204,6 +207,9 @@ func (c *Container) streamContainerLogs(ctx context.Context) error {
 	_, err = stdcopy.StdCopy(bridge, bridge, out)
 
 	if err != nil && err != io.EOF {
+		if strings.Contains(err.Error(), "context canceled") {
+			return nil
+		}
 		return fmt.Errorf("log stream error for %s: %w", c.id, err)
 	}
 

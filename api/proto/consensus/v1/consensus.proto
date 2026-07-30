@@ -8,6 +8,7 @@ service ConsensusCoordinationService {
   rpc RequestVote(VoteRequest) returns (VoteResponse);
   rpc AppendEntries(AppendRequest) returns (AppendResponse);
   rpc ClientAppend(RawAppendRequest) returns (AppendResponse);
+  rpc GetData(GetDataRequest) returns (GetDataResponse);
   rpc InstallSnapshot(InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }
 
@@ -48,6 +49,18 @@ message RawAppendRequest {
   string request_id = 2;
   string scheduler_id = 3;
   bytes payload = 4;
+}
+
+message GetDataRequest {
+  string origin_node_id = 1;
+  optional string scheduler_id_query = 2;
+  optional string payload_id_query = 3;
+}
+
+message GetDataResponse {
+  string origin_node_id = 1;
+  bool exists = 2;
+  repeated bytes payloads = 3;
 }
 
 message InstallSnapshotRequest {

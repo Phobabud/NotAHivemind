@@ -3,11 +3,12 @@ package service
 import (
 	pb "ClusterManager/api/gen/cluster/v1"
 	"ClusterManager/internal/cluster/core"
+	"context"
 	"fmt"
-	"log"
 	"net"
 	"time"
 
+	"github.com/golang/glog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -17,10 +18,11 @@ import (
 type ClusterServer struct {
 	pb.UnimplementedClusterServiceServer
 
-	nodeID      string
-	nodeAddress string
-	totalCPU    int64
-	totalMemory int64
+	nodeID                   string
+	nodeAddress              string
+	totalCPU                 int64
+	totalMemory              int64
+	lastContactFromScheduler time.Time
 
 	jobQueue   core.JobQueue
 	containers core.ContainerPool
@@ -39,15 +41,16 @@ func NewClusterServer(nodeID string, address string, cpu int64, mem int64, jq co
 	grpcServer := grpc.NewServer(grpc.KeepaliveParams(kasp))
 
 	srv := &ClusterServer{
-		nodeID:      nodeID,
-		nodeAddress: address,
-		totalCPU:    cpu,
-		totalMemory: mem,
-		jobQueue:    jq,
-		containers:  cp,
-		images:      images,
-		statusCh:    statusCh,
-		grpcServer:  grpcServer,
+		nodeID:                   nodeID,
+		nodeAddress:              address,
+		totalCPU:                 cpu,
+		totalMemory:              mem,
+		lastContactFromScheduler: time.Now(),
+		jobQueue:                 jq,
+		containers:               cp,
+		images:                   images,
+		statusCh:                 statusCh,
+		grpcServer:               grpcServer,
 	}
 
 	pb.RegisterClusterServiceServer(grpcServer, srv)
@@ -61,14 +64,33 @@ func (s *ClusterServer) Start() error {
 		return fmt.Errorf("failed to listen on %s: %w", s.nodeAddress, err)
 	}
 
-	log.Printf("Worker Node %s listening for Scheduler commands on %s", s.nodeID, s.nodeAddress)
 	return s.grpcServer.Serve(listener)
 }
 
 // Stop gracefully drains active connections and shuts down the listener.
 func (s *ClusterServer) Stop() {
 	if s.grpcServer != nil {
-		log.Printf("Gracefully shutting down gRPC server for node %s...", s.nodeID)
-		s.grpcServer.GracefulStop()
+		s.grpcServer.Stop()
+	}
+}
+
+func (s *ClusterServer) MonitorConnection(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Since(s.lastContactFromScheduler) > 5*time.Second {
+				glog.V(1).Infof("Scheduler connection lost for cluster, destroying %d containers", s.containers.Len())
+				if s.containers.Len() == 0 {
+					continue
+				}
+				if err := s.containers.DestroyAll(ctx); err != nil {
+					glog.Errorf("Failed to destroy containers for cluster %s. Error: %v", s.nodeID, err)
+				}
+			}
+		}
 	}
 }

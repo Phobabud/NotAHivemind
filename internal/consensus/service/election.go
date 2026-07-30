@@ -115,14 +115,14 @@ func (n *Node) StartElection(ctx context.Context) {
 	n.mutex.Unlock()
 	peers := n.Peers()
 
-	glog.Infof("Node %s initiating tentative Pre-Vote phase for Term %d", n.state.ID(), preVoteTerm)
+	glog.V(2).Infof("Node %s initiating tentative Pre-Vote phase for Term %d", n.state.ID(), preVoteTerm)
 
 	majorityNeeded := (len(peers)+1)/2 + 1
 
 	if majorityNeeded == 1 {
 		n.mutex.Lock()
 		if n.state.CurrentTerm() == oldTerm {
-			glog.Infof("Node %s won election (single cluster cluster)", n.state.ID())
+			glog.V(1).Infof("Node %s won election (single cluster cluster)", n.state.ID())
 			n.state.BecomeCandidate()
 			n.state.SetCurrentTerm(preVoteTerm)
 			n.state.SetVotedFor(n.state.ID())
@@ -141,7 +141,7 @@ func (n *Node) StartElection(ctx context.Context) {
 		return
 	}
 
-	glog.Infof("Node %s successfully won Pre-Vote phase. Launching formal election for Term %d.", n.state.ID(), preVoteTerm)
+	glog.V(1).Infof("Node %s successfully won Pre-Vote phase. Launching formal election for Term %d.", n.state.ID(), preVoteTerm)
 
 	n.mutex.Lock()
 	if n.state.Role() == core.Leader || n.state.CurrentTerm() != oldTerm {
@@ -166,7 +166,7 @@ func (n *Node) StartElection(ctx context.Context) {
 	if electionSuccess {
 		n.mutex.Lock()
 		if n.state.Role() == core.Candidate && n.state.CurrentTerm() == preVoteTerm {
-			glog.Infof("Node %s won election for Term %d", n.state.ID(), preVoteTerm)
+			glog.V(1).Infof("Node %s won election for Term %d", n.state.ID(), preVoteTerm)
 			n.state.BecomeLeader()
 			n.state.UpdateLeader(n.state.ID())
 			n.commitIndex = n.FileHandler.Index() // Ensure state transitions process safely

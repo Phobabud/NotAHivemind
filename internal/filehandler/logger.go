@@ -3,16 +3,18 @@ package filehandler
 
 import (
 	"bufio"
-	"log"
 	"os"
+	"path"
+
+	"github.com/golang/glog"
 )
 
 // LogWriter Designed to write data from the containers to separate files, keeping container data and main data apart
 type LogWriter struct {
 	folderPath  string
 	permissions os.FileMode
-	dataQueue chan Log
-	files     map[string]*os.File
+	dataQueue   chan Log
+	files       map[string]*os.File
 }
 
 type Log struct {
@@ -21,22 +23,27 @@ type Log struct {
 }
 
 // NewLogWriter initializes a new LogWriter with the specified log folder path, file permissions, and queue size for entries.
-func NewLogWriter(logFolderPath string, permissions os.FileMode, queueSize int) LogWriter {
+func NewLogWriter(logFolderPath string, permissions os.FileMode, queueSize int) (LogWriter, error) {
+	err := os.MkdirAll(logFolderPath, os.ModePerm)
+	if err != nil {
+		return LogWriter{}, err
+	}
+
 	return LogWriter{
 		folderPath:  logFolderPath,
 		permissions: permissions,
 		dataQueue:   make(chan Log, queueSize),
 		files:       make(map[string]*os.File),
-	}
+	}, nil
 }
 
 // Add takes the load off of the goroutine, allow it to end without the workload of managing logging itself (is this smart?)
 func (w *LogWriter) Add(entry []string, filename string) {
 	if w.files[filename] == nil {
-		filePath := w.folderPath + filename
+		filePath := path.Join(w.folderPath, filename)
 		file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, w.permissions)
 		if err != nil {
-			log.Printf("Failed to open file %s for append: %v", filename, err)
+			glog.Errorf("Failed to open file %s for append: %v", filename, err)
 			return // Skip adding this log entry
 		}
 		w.files[filename] = file
@@ -53,7 +60,7 @@ func (w *LogWriter) FreeFile(filename string) {
 	if w.files[filename] != nil {
 		err := w.files[filename].Close()
 		if err != nil {
-			log.Printf("Failed to close file %s: %v", filename, err)
+			glog.Errorf("Failed to close file %s: %v", filename, err)
 		}
 		delete(w.files, filename)
 	}
@@ -65,7 +72,7 @@ func (w *LogWriter) Close() {
 	for _, file := range w.files {
 		err := file.Close()
 		if err != nil {
-			log.Printf("Failed to close file: %v", err)
+			glog.Errorf("Failed to close file: %v", err)
 		}
 	}
 }
@@ -80,10 +87,10 @@ func (w *LogWriter) AsyncWrite() {
 		if w.files[val.FileName] == nil {
 			file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, w.permissions)
 			if err != nil {
-				log.Printf("Failed to find file %s for append in logger: %v", val.FileName, err)
+				glog.Errorf("Failed to find file %s for append in logger: %v", val.FileName, err)
 			}
 			w.files[val.FileName] = file
-			log.Printf("Created new log file: %s", val.FileName)
+			glog.Infof("Created new log file: %s", val.FileName)
 		}
 
 		writer := bufio.NewWriter(w.files[val.FileName])
@@ -91,14 +98,14 @@ func (w *LogWriter) AsyncWrite() {
 		for _, line := range val.Entries {
 			// Write line and newline to the buffered writer
 			if _, err := writer.WriteString(line + "\n"); err != nil {
-				log.Printf("Failed to write line to buffer for file %s: %v", val.FileName, err)
+				glog.Errorf("Failed to write line to buffer for file %s: %v", val.FileName, err)
 				break // Stop writing this entry on error
 			}
 		}
 
 		//Flush the buffer
 		if err := writer.Flush(); err != nil {
-			log.Printf("Failed to flush writer to file %s: %v", val.FileName, err)
+			glog.Errorf("Failed to flush writer to file %s: %v", val.FileName, err)
 		}
 	}
 }

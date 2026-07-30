@@ -51,7 +51,7 @@ func (n *Node) AddLog(ctx context.Context) {
 		}
 
 		if err := n.FileHandler.Append(logEntry); err != nil {
-			glog.Errorf("AddLog: Failed to append log entry locally: %v", err)
+			glog.Errorf("Failed to append log entry locally: %v", err)
 			n.mutex.Unlock()
 			n.reqRegistry.Resolve(req.RequestId, false)
 			continue
@@ -97,7 +97,7 @@ func (n *Node) AddLog(ctx context.Context) {
 
 				resp, err := p.Client().AppendEntries(rpcCtx, appendRequest)
 				if err != nil {
-					glog.V(2).Infof("AddLog: Failed to replicate to peer %s: %v", p.ID(), err)
+					glog.V(2).Infof("Failed to replicate to peer %s: %v", p.ID(), err)
 					return
 				}
 
@@ -111,7 +111,7 @@ func (n *Node) AddLog(ctx context.Context) {
 				} else if resp.Status == 2 || resp.Status == 3 {
 					n.mutex.Lock()
 					if resp.PrevLogTerm > n.state.CurrentTerm() {
-						glog.Warningf("AddLog: Stepping down. Found higher term %d on peer %s", resp.PrevLogTerm, p.ID())
+						glog.V(1).Infof("Stepping down. Found higher term %d on peer %s", resp.PrevLogTerm, p.ID())
 						n.state.BecomeFollower()
 						n.state.SetCurrentTerm(resp.PrevLogTerm)
 						n.mutex.Unlock()
@@ -136,7 +136,7 @@ func (n *Node) AddLog(ctx context.Context) {
 		select {
 		case <-quorumReached:
 			if atomic.LoadInt64(&successfulAcks) >= int64(majorityNeeded) {
-				glog.V(1).Infof("AddLog: Successfully replicated log index %d to majority. Resolving request %s", nextIdx, req.RequestId)
+				glog.V(2).Infof("Successfully replicated log index %d to majority. Resolving request %s", nextIdx, req.RequestId)
 
 				n.mutex.Lock()
 				if nextIdx > n.commitIndex {
@@ -146,7 +146,7 @@ func (n *Node) AddLog(ctx context.Context) {
 
 				n.reqRegistry.Resolve(req.RequestId, true)
 			} else {
-				glog.Warningf("AddLog: Failed to reach quorum for log index %d. Resolving as false.", nextIdx)
+				glog.V(2).Infof("Failed to reach quorum for log index %d. Resolving as false.", nextIdx)
 				n.reqRegistry.Resolve(req.RequestId, false)
 			}
 		case <-ctx.Done():
@@ -165,7 +165,7 @@ func (n *Node) resolvePeerLag(ctx context.Context, peer core.PeerState, failedIn
 	}
 	defer activeCatchup.Delete(peerID)
 
-	glog.V(1).Infof("resolvePeerLag: Starting catchup loop for peer %s (index: %d, initial status: %d)", peerID, failedIndex, initialStatus)
+	glog.V(1).Infof("Starting catchup loop for peer [%s] (index: %d, initial status: %d)", peerID, failedIndex, initialStatus)
 
 	targetIndex := failedIndex - 1
 	status := initialStatus
@@ -190,16 +190,16 @@ func (n *Node) resolvePeerLag(ctx context.Context, peer core.PeerState, failedIn
 		n.mutex.Unlock()
 
 		if targetIndex > leaderLastIndex {
-			glog.V(1).Infof("resolvePeerLag: Peer %s is fully caught up to leader index %d", peerID, leaderLastIndex)
+			glog.V(1).Infof("Peer [%s] is fully caught up to leader index %d", peerID, leaderLastIndex)
 			return
 		}
 
 		if status == 3 || targetIndex <= discIndex {
-			glog.Warningf("resolvePeerLag: Peer %s index %d is behind snapshot boundary %d. Initiating snapshot stream...", peerID, targetIndex, discIndex)
+			glog.V(2).Infof("Peer [%s] index %d is behind snapshot boundary %d. Initiating snapshot stream...", peerID, targetIndex, discIndex)
 
 			err := n.sendSnapshotToPeer(ctx, peer, discIndex, discTerm)
 			if err != nil {
-				glog.Errorf("resolvePeerLag: Failed to stream snapshot to peer %s: %v", peerID, err)
+				glog.Errorf("Failed to stream snapshot to peer [%s]: %v", peerID, err)
 				return
 			}
 
@@ -257,18 +257,18 @@ func (n *Node) resolvePeerLag(ctx context.Context, peer core.PeerState, failedIn
 		cancel()
 
 		if err != nil {
-			glog.V(2).Infof("resolvePeerLag: Communication failure with peer %s: %v", peerID, err)
+			glog.V(2).Infof("Communication failure with peer %s: %v", peerID, err)
 			return
 		}
 
 		if resp.Status == 1 {
-			glog.V(2).Infof("resolvePeerLag: Peer %s accepted log index %d", peerID, targetIndex)
+			glog.V(3).Infof("Peer %s accepted log index %d", peerID, targetIndex)
 			targetIndex++
 			status = 1
 		} else if resp.Status == 2 || resp.Status == 3 {
 			n.mutex.Lock()
 			if resp.PrevLogTerm > n.state.CurrentTerm() { // Logical term
-				glog.Warningf("resolvePeerLag: Stepping down. Found higher term %d on peer %s", resp.PrevLogTerm, peerID)
+				glog.V(1).Infof("Stepping down. Found higher term %d on peer [%s]", resp.PrevLogTerm, peerID)
 				n.state.BecomeFollower()
 				n.state.SetCurrentTerm(resp.PrevLogTerm)
 				n.mutex.Unlock()
@@ -280,7 +280,7 @@ func (n *Node) resolvePeerLag(ctx context.Context, peer core.PeerState, failedIn
 			if status == 2 {
 				targetIndex--
 				if targetIndex < 1 {
-					glog.Warningf("resolvePeerLag: Cannot roll back below index 1 for peer %s", peerID)
+					glog.Warningf("Cannot roll back below index 1 for peer [%s]", peerID)
 					return
 				}
 			}
@@ -352,6 +352,6 @@ func (n *Node) sendSnapshotToPeer(ctx context.Context, peer core.PeerState, last
 		}
 	}
 
-	glog.Infof("sendSnapshotToPeer: Successfully transmitted snapshot state (%d bytes) up to index %d to peer %s", offset, lastIncludedIndex, peer.ID())
+	glog.V(2).Infof("Successfully transmitted snapshot state (%d bytes) up to index %d to peer [%s]", offset, lastIncludedIndex, peer.ID())
 	return nil
 }

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Status represents the internal, clean state of a worker node.
+// Status represents the internal, clean state of a worker cluster.
 type Status struct {
 	NodeID          string
 	Address         string
@@ -57,7 +57,6 @@ func ParseJobEvent(resp *pb.JobStatusResponse) *JobEvent {
 		Status:     resp.Status,
 		Priority:   int(resp.Priority),
 		ImageAlias: resp.ImageAlias,
-		//TODO: check success value handling
 	}
 
 	if resp.Payload != nil {

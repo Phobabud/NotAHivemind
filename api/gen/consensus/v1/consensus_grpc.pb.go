@@ -22,6 +22,7 @@ const (
 	ConsensusCoordinationService_RequestVote_FullMethodName     = "/consensus.v1.ConsensusCoordinationService/RequestVote"
 	ConsensusCoordinationService_AppendEntries_FullMethodName   = "/consensus.v1.ConsensusCoordinationService/AppendEntries"
 	ConsensusCoordinationService_ClientAppend_FullMethodName    = "/consensus.v1.ConsensusCoordinationService/ClientAppend"
+	ConsensusCoordinationService_GetData_FullMethodName         = "/consensus.v1.ConsensusCoordinationService/GetData"
 	ConsensusCoordinationService_InstallSnapshot_FullMethodName = "/consensus.v1.ConsensusCoordinationService/InstallSnapshot"
 )
 
@@ -32,6 +33,7 @@ type ConsensusCoordinationServiceClient interface {
 	RequestVote(ctx context.Context, in *VoteRequest, opts ...grpc.CallOption) (*VoteResponse, error)
 	AppendEntries(ctx context.Context, in *AppendRequest, opts ...grpc.CallOption) (*AppendResponse, error)
 	ClientAppend(ctx context.Context, in *RawAppendRequest, opts ...grpc.CallOption) (*AppendResponse, error)
+	GetData(ctx context.Context, in *GetDataRequest, opts ...grpc.CallOption) (*GetDataResponse, error)
 	InstallSnapshot(ctx context.Context, in *InstallSnapshotRequest, opts ...grpc.CallOption) (*InstallSnapshotResponse, error)
 }
 
@@ -73,6 +75,16 @@ func (c *consensusCoordinationServiceClient) ClientAppend(ctx context.Context, i
 	return out, nil
 }
 
+func (c *consensusCoordinationServiceClient) GetData(ctx context.Context, in *GetDataRequest, opts ...grpc.CallOption) (*GetDataResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetDataResponse)
+	err := c.cc.Invoke(ctx, ConsensusCoordinationService_GetData_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *consensusCoordinationServiceClient) InstallSnapshot(ctx context.Context, in *InstallSnapshotRequest, opts ...grpc.CallOption) (*InstallSnapshotResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InstallSnapshotResponse)
@@ -90,6 +102,7 @@ type ConsensusCoordinationServiceServer interface {
 	RequestVote(context.Context, *VoteRequest) (*VoteResponse, error)
 	AppendEntries(context.Context, *AppendRequest) (*AppendResponse, error)
 	ClientAppend(context.Context, *RawAppendRequest) (*AppendResponse, error)
+	GetData(context.Context, *GetDataRequest) (*GetDataResponse, error)
 	InstallSnapshot(context.Context, *InstallSnapshotRequest) (*InstallSnapshotResponse, error)
 	mustEmbedUnimplementedConsensusCoordinationServiceServer()
 }
@@ -109,6 +122,9 @@ func (UnimplementedConsensusCoordinationServiceServer) AppendEntries(context.Con
 }
 func (UnimplementedConsensusCoordinationServiceServer) ClientAppend(context.Context, *RawAppendRequest) (*AppendResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClientAppend not implemented")
+}
+func (UnimplementedConsensusCoordinationServiceServer) GetData(context.Context, *GetDataRequest) (*GetDataResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetData not implemented")
 }
 func (UnimplementedConsensusCoordinationServiceServer) InstallSnapshot(context.Context, *InstallSnapshotRequest) (*InstallSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method InstallSnapshot not implemented")
@@ -189,6 +205,24 @@ func _ConsensusCoordinationService_ClientAppend_Handler(srv interface{}, ctx con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ConsensusCoordinationService_GetData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConsensusCoordinationServiceServer).GetData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConsensusCoordinationService_GetData_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConsensusCoordinationServiceServer).GetData(ctx, req.(*GetDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ConsensusCoordinationService_InstallSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InstallSnapshotRequest)
 	if err := dec(in); err != nil {
@@ -225,6 +259,10 @@ var ConsensusCoordinationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClientAppend",
 			Handler:    _ConsensusCoordinationService_ClientAppend_Handler,
+		},
+		{
+			MethodName: "GetData",
+			Handler:    _ConsensusCoordinationService_GetData_Handler,
 		},
 		{
 			MethodName: "InstallSnapshot",

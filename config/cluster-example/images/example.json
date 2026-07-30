@@ -1,0 +1,20 @@
+{
+  "alias": "example-alias",
+  "image_name": "tensorflow/tensorflow:latest-gpu",
+  "volumes": [
+    {
+      "source": "/mnt/host_data/models",
+      "target": "/app/models",
+      "type": "bind"
+    }
+  ],
+  "args": [
+    "python3",
+    "/app/models/train.py"
+  ],
+  "CPULimit": 2000000000,
+  "memoryLimit": 4294967296,
+  "persistent": false,
+  "max_jobs": 100,
+  "timeout": 3600
+}

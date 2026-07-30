@@ -4,6 +4,8 @@ import (
 	"ClusterManager/internal/cluster/core"
 	"context"
 	"time"
+
+	"github.com/golang/glog"
 )
 
 type HealthRule func(ctx context.Context, pool core.ContainerAPI, queue core.JobQueue) HealthAction
@@ -27,6 +29,7 @@ func RunHealthRule(ctx context.Context, pool core.ContainerPool, queue core.JobQ
 			action := rule(opCtx, container, queue)
 
 			if action == HealthDelete {
+				glog.V(3).Infof("Container [%s] failed a healthcheck with an action of Delete", container.Id())
 				if container.HasJob() {
 					_ = queue.MarkCompleted(container.JobID(), nil, false)
 				}

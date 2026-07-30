@@ -33,7 +33,7 @@ var (
 
 func init() {
 	var err error
-	configPath := flag.String("config", "configs/consensus/example.json", "Path to the cluster configuration file")
+	configPath := flag.String("test_config", "configs/consensus/example.json", "Path to the cluster configuration file")
 	flag.Parse()
 
 	nodeConfig, err = config.ImportEnvironment(*configPath)
@@ -60,24 +60,24 @@ func init() {
 
 	ctx, cancel = context.WithCancel(context.Background())
 
-	glog.V(1).Info("Loading Storage")
+	glog.V(3).Info("Loading Storage")
 
 	storage, err = filesystem.LoadStorage(nodeConfig.ConsensusLogDirectory)
 	if err != nil {
 		glog.Fatalf("Failed to load storage: %v", err)
 	}
 
-	glog.V(1).Info("Loading Peers")
+	glog.V(3).Info("Loading Peers")
 
 	peers = make([]core.PeerState, 0)
 	for _, peer := range nodeConfig.Peers {
 		peers = append(peers, state.New(peer.NodeID, peer.NodeAddress))
 	}
 
-	glog.V(1).Info("Starting Node...")
+	glog.V(3).Info("Starting gRPC server and clients...")
 	node = service.NewNode(ctx, nodeConfig.NodeID, nodeConfig.NodePort, storage, peers)
 	if err := waitForMajorityConnected(ctx, node, len(peers)); err != nil {
-		glog.Fatalf("Failed to wait for majority connected: %v", err)
+		glog.Fatalf("Safeguard: Failed to wait for majority connected: %v", err)
 	}
 	node.RecordContact()
 }
@@ -89,9 +89,8 @@ func main() {
 		if err := storage.Close(); err != nil {
 			glog.Warningf("Failed to close storage: %v", err)
 		}
-		glog.Warningf("Node shutdown complete.")
+		glog.V(1).Infof("Node shutdown complete.")
 	}()
-	glog.V(1).Info("Starting consensus cluster")
 
 	// Start asynchronous snapshot storage thread
 	go func() {
@@ -105,8 +104,9 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
+	glog.V(1).Infof("Consensus Node [%s] Listening on [%s]", nodeConfig.NodeID, nodeConfig.NodePort)
 	<-sigCh
-	glog.Info("Shutdown signal received, gracefully stopping...")
+	glog.V(1).Info("Shutdown signal received, gracefully stopping...")
 }
 
 // waitForMajorityConnected blocks until a majority of the cluster nodes are healthy.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/go-connections/nat"
+	"github.com/golang/glog"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/docker/docker/api/types/container"
@@ -78,11 +79,19 @@ func (c *Container) Init(ctx context.Context, args ...string) (string, error) {
 
 	// Construct volume
 	jobsDir := filepath.Join(c.payloadLocation, c.id)
-	if err := os.MkdirAll(jobsDir, 0755); err != nil {
+	absJobsDir, err := filepath.Abs(jobsDir)
+	glog.V(3).Infof("Creating jobs directory at %s for container %s", absJobsDir, c.id)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute path for jobs directory: %w", err)
+	}
+	dockerSafeJobsDir := filepath.ToSlash(absJobsDir)
+
+	if err := os.MkdirAll(absJobsDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create jobs directory: %w", err)
 	}
-	payloadDir := filepath.Join(jobsDir, "payload")
-	resultDir := filepath.Join(jobsDir, "results")
+	payloadDir := filepath.Join(absJobsDir, "payload")
+	resultDir := filepath.Join(absJobsDir, "results")
+	glog.V(3).Infof("Creating payload directory at %s and result directory at %s for container %s", payloadDir, resultDir, c.id)
 	if err := os.MkdirAll(payloadDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create payload directory: %w", err)
 	}
@@ -94,7 +103,7 @@ func (c *Container) Init(ctx context.Context, args ...string) (string, error) {
 	var mounts []mount.Mount
 	mounts = append(mounts, mount.Mount{
 		Type:   mount.TypeBind,
-		Source: jobsDir,
+		Source: dockerSafeJobsDir,
 		Target: "/job/",
 	})
 	for _, volume := range c.volumes {
@@ -116,6 +125,7 @@ func (c *Container) Init(ctx context.Context, args ...string) (string, error) {
 		Env: []string{
 			fmt.Sprintf("CONTAINER_NAME=%s", c.id),
 			fmt.Sprintf("PORT=%s", c.localPort), // Containers doesn't use this functionally!
+			"PYTHONUNBUFFERED=1",
 		},
 	}, &container.HostConfig{
 		Mounts: mounts,
@@ -133,6 +143,7 @@ func (c *Container) Init(ctx context.Context, args ...string) (string, error) {
 		},
 	}, nil, nil, c.id)
 	if err != nil { // Return empty response on failure
+		glog.Errorf("Failed to create container: %v", err)
 		return "", fmt.Errorf("failed to create container: %v", err)
 	}
 
@@ -156,6 +167,7 @@ func (c *Container) Launch(ctx context.Context) error {
 		if c.dockerID == "" {
 			return fmt.Errorf("container %s has not been created", c.id)
 		}
+		glog.V(3).Infof("Launching container %s", c.id)
 		if err := c.client.ContainerStart(runCtx, c.dockerID, container.StartOptions{}); err != nil {
 			return fmt.Errorf("failed to start container: %v", err)
 		}
@@ -172,7 +184,7 @@ func (c *Container) Launch(ctx context.Context) error {
 	})
 	if !c.image.Persistent {
 		g.Go(func() error {
-			return c.monitorForResults(runCtx, 500*time.Millisecond)
+			return c.monitorForResults(runCtx, 50*time.Millisecond)
 		})
 	}
 
@@ -244,8 +256,11 @@ func (c *Container) Delete(ctx context.Context) error {
 		return fmt.Errorf("container %s has not been created, cannot delete", c.id)
 	}
 
+	deleteCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	// Clean up container, we may not want to reuse the container in the future
-	if err := c.client.ContainerRemove(ctx, c.dockerID, container.RemoveOptions{Force: true}); err != nil {
+	if err := c.client.ContainerRemove(deleteCtx, c.dockerID, container.RemoveOptions{Force: true}); err != nil {
 		return fmt.Errorf("failed to remove container: %v", err)
 	}
 	c.dockerID = "" // Clear the ID to indicate it's been deleted
@@ -254,6 +269,7 @@ func (c *Container) Delete(ctx context.Context) error {
 		return fmt.Errorf("failed to remove jobs folder: %v", err)
 	}
 	c.payloadLocation = ""
+	glog.V(2).Infof("Container [%s] and its resources have been deleted", c.id)
 	return nil
 }
 

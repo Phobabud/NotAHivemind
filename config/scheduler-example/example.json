@@ -1,0 +1,30 @@
+{
+  "scheduler_id": "scheduler-east-1",
+  "scheduler_port": "50050",
+  "log_directory": "./logdir/scheduler-east-1",
+  "peer_schedulers": [
+    {
+      "peer_id": "scheduler-east-2",
+      "peer_port": ":50055"
+    },
+    {
+      "peer_id": "scheduler-east-3",
+      "peer_port": ":50056"
+    }
+  ],
+  "clusters": [
+    {
+      "peer_id": "cluster-1",
+      "peer_port": ":50057"
+    },
+    {
+      "peer_id": "cluster-2",
+      "peer_port": ":50058"
+    }
+  ],
+  "raft_ports": [
+    ":7000",
+    ":7001",
+    ":7002"
+  ]
+}
