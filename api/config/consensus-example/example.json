@@ -1,0 +1,15 @@
+{
+  "node_id": "Node-Example-1",
+  "node_port": ":50051",
+  "node_address": "localhost:50051",
+  "consensus_log_directory": "./data/",
+  "log_directory": "./logdir/",
+  "log_verbosity": 2,
+  "log_output_location": "true",
+  "peers": [
+    {
+      "node_id": "Random-Peer",
+      "node_address": "localhost:50052"
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 ![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker)
 ![Active Testing](https://img.shields.io/badge/status-active--testing-blue)
 
-This is an implementation of a distributed cluster manager designed to manage containerized workloads across multiple machines. The masterless design philosophy allows for high availability and scalability, while simplifying network communication (and the amount of code needed to maintain effectiveness).
+This is an implementation of a peer to peer distributed cluster manager designed to manage containerized workloads across multiple machines. The almost masterless design philosophy allows for high availability and scalability, while simplifying network communication (and the amount of code needed to maintain effectiveness).
 
 Powered by a custom Raft engine, which SHOULD NOT be used for production environments. If you are looking for a production-ready distributed workload management system, I recommend looking into [Kubernetes](https://kubernetes.io/) or [Docker Swarm](https://docs.docker.com/engine/swarm/).
 
@@ -56,5 +56,6 @@ Schedulers have ownership of clusters, so other schedulers cannot deploy jobs to
 - [ ] Documentation and comment updates
   - Quickstart & Installation
 - [ ] 12-month rigorous testing and optimization phase for distributed workloads
-    - [ ] Custom Testing Software
-    - [ ] Stress Testing
+    - [x] Custom Testing Software
+    - [x] Stress Testing
+- [ ] Speed Optimizations

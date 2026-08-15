@@ -1,5 +1,4 @@
 .idea/
-ClusterManager/temp_build
-ClusterManager/test_filestore
+/temp_build
 test_*/
 DESIGN.md
