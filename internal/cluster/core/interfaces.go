@@ -171,10 +171,10 @@ type JobQueue interface {
 	ActiveJobs() []*Job
 
 	// LenPending returns the length of the pending job list
-	LenPending() int
+	LenPending() int32
 
 	// LenActive returns the length of the active job list
-	LenActive() int
+	LenActive() int32
 
 	// ClearAllJobs marks all jobs as completed, streaming everything with empty payloads
 	ClearAllJobs()
@@ -184,6 +184,9 @@ type JobQueue interface {
 
 	// Close closes the Completed channel
 	Close()
+
+	// PendingJobTypes returns a map of job types (by image alias) and their counts in the pending queue
+	PendingJobTypes() map[string]int
 
 	/*
 		Job State Management------------------------------------------------------------------------------------------------
@@ -202,16 +205,7 @@ type JobQueue interface {
 		Packing-------------------------------------------------------------------------------------------------------------
 	*/
 
-	// NextBestJob will attempt to find the next best job based on the following heuristic
-	//
-	// If the highest priority group (IE all jobs at priority 10, where 10 is the highest) has a container free to do one of the jobs in that group, it'll return that job.
-	// If no job in the highest priority group could be found, it'll find the largest possible image that a job in the high priority group needs that can fit
-	// If no jobs in that high priority group can fit, it'll move to the next group
-	// If no jobs can be packed, it'll return nil, indicating to the scheduler that the existing containers need to be torn down
-	//
-	// freeContainerImageNames is a list of strings that represent the containers (by image name) that are free
-	// freeCpus represents the amount of free nano cpus
-	// freeMem represents the amount of free memory
+	// NextBestJob will attempt to find the next best job by picking the highest priority job, then by the highest priority matching active, but free containers
 	NextBestJob(freeContainers []string, freeCpu int64, freeMem int64) *Job
 
 	QueueUtilization() (int64, int64)

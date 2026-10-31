@@ -12,6 +12,7 @@ func (p *Packer) checkRaftConnection(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	count := 0
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -53,7 +54,14 @@ func (p *Packer) requestClusterState(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		p.state.UpdateCluster(cluster.ID, int64(status.TotalCPU-status.AvailableCPU), int64(status.TotalMemory-status.AvailableMemory), int64(status.TotalCPU), int64(status.TotalMemory))
+
+		p.state.UpdateCluster(
+			cluster.ID,
+			int64(status.TotalCPU-status.AvailableCPU),
+			int64(status.TotalMemory-status.AvailableMemory),
+			int64(status.TotalCPU),
+			int64(status.TotalMemory),
+		)
 	}
 }
 
@@ -78,6 +86,7 @@ func (p *Packer) attemptSchedulerTakeover(ctx context.Context, schedulerID strin
 	if mostRecentEvent.OriginSchedulerID != schedulerID || mostRecentEvent.Entry == models.Online.String() {
 		return
 	}
+
 	if err := p.sc.RaftConn.CommitSchedulerEvent(ctx, p.state.Id(), schedulerID, models.RedistributedJobs.String()); err != nil {
 		return
 	}
@@ -87,7 +96,9 @@ func (p *Packer) reallocateDeadClusterJobs(ctx context.Context) {
 	staleClusters := p.state.StaleClusters(5 * time.Second)
 	for _, staleClusterID := range staleClusters {
 		jobIDs := p.state.JobsInCluster(staleClusterID)
+
 		for _, jobID := range jobIDs {
+			// Cleanly roll jobs back into the pending queue if a cluster vanishes
 			p.state.UnassignJob(jobID)
 		}
 	}

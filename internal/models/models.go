@@ -6,7 +6,7 @@ type JobPayload struct {
 	ID                string          `json:"id"`
 	State             Status          `json:"state"`
 	Image             string          `json:"image"`
-	Priority          int             `json:"priority"`
+	Priority          int64           `json:"priority"`
 	CPURequirement    int64           `json:"cpu_requirement"`
 	MemoryRequirement int64           `json:"memory_requirement"`
 	Payload           json.RawMessage `json:"payload"`

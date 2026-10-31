@@ -55,6 +55,8 @@ func (n *Node) AppendEntries(ctx context.Context, req *pb.AppendRequest) (*pb.Ap
 
 	if req.PrevLogIndex > n.FileHandler.Index() {
 		defaultResponse.Status = pb.AppendResponseStatus_APPEND_RESPONSE_BAD_PAYLOAD
+		defaultResponse.PrevLogIndex = n.FileHandler.Index()
+		defaultResponse.PrevLogTerm = n.FileHandler.Term()
 		glog.V(2).Infof("Received AppendEntries from %s for Index %d, but our log index is %d. Rejecting.", req.OriginNodeId, req.Index, n.FileHandler.Index())
 		return defaultResponse, nil
 	}
@@ -62,6 +64,8 @@ func (n *Node) AppendEntries(ctx context.Context, req *pb.AppendRequest) (*pb.Ap
 	// Prev log term validation check
 	if req.PrevLogIndex == n.FileHandler.Index() && req.PrevLogTerm != n.FileHandler.Term() {
 		defaultResponse.Status = pb.AppendResponseStatus_APPEND_RESPONSE_BAD_PAYLOAD
+		defaultResponse.PrevLogIndex = n.FileHandler.Index()
+		defaultResponse.PrevLogTerm = n.FileHandler.Term()
 		glog.V(2).Infof("Received AppendEntries from %s with PrevLogTerm %d, but our log term at index %d is %d. Rejecting.", req.OriginNodeId, req.PrevLogTerm, req.PrevLogIndex, n.FileHandler.Term())
 		return defaultResponse, nil
 	}

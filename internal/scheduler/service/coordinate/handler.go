@@ -33,10 +33,10 @@ func (h *Handler) RequestJob(ctx context.Context, req *pb.JobRequest) (*pb.JobRe
 	id := models.NewJobID()
 	h.state.AppendJob(&core.Job{
 		Id:                id.String(),
-		ImageAlias:        *req.ImageAlias,
+		ImageAlias:        req.GetImageAlias(),
 		CPURequirement:    req.RequiredNanoCpu,
 		MemoryRequirement: req.RequiredMemoryBytes,
-		Priority:          int(*req.Priority),
+		Priority:          req.GetPriority(),
 		Payload:           req.Payload,
 		Response:          nil,
 	})
@@ -83,7 +83,7 @@ func (h *Handler) Redistribute(ctx context.Context, req *pb.RedistributeRequest)
 	glog.V(2).Infof("Received redistributed job %s from peer %s", req.JobId, req.OriginSchedulerId)
 
 	// Can we actually handle it?
-	if h.state.LeastUtilizedCluster(req.RequiredNanoCpu, req.RequiredMemoryBytes) == "" {
+	if h.state.LeastUtilizedCluster(req.RequiredNanoCpu, req.RequiredMemoryBytes) == "" && h.state.AtMaximumCapacity(req.RequiredNanoCpu, req.RequiredMemoryBytes) {
 		glog.V(2).Infof("Rejected redistributed job %s: no immediate capacity available.", req.JobId)
 		return &pb.RedistributeResponse{
 			JobId:               req.JobId,
@@ -91,19 +91,28 @@ func (h *Handler) Redistribute(ctx context.Context, req *pb.RedistributeRequest)
 			Accept:              false,
 		}, nil
 	}
+
+	if req.Gossip {
+		return &pb.RedistributeResponse{
+			JobId:               req.JobId,
+			AssignedSchedulerId: h.state.Id(),
+			Accept:              true,
+		}, nil
+	}
+
 	h.state.AppendJob(&core.Job{
 		Id:                req.JobId,
 		ImageAlias:        *req.ImageAlias,
 		CPURequirement:    req.RequiredNanoCpu,
 		MemoryRequirement: req.RequiredMemoryBytes,
-		Priority:          int(*req.Priority),
+		Priority:          *req.Priority,
 		Payload:           req.Payload,
 		Response:          nil,
 	})
 
 	return &pb.RedistributeResponse{
 		JobId:               req.JobId,
-		AssignedSchedulerId: h.state.Id(), // Acknowledge that we took ownership
+		AssignedSchedulerId: h.state.Id(),
 		Accept:              true,
 	}, nil
 }

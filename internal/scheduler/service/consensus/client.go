@@ -42,6 +42,8 @@ func NewRaftClient(addresses []string) (*RaftClient, error) {
 		return nil, fmt.Errorf("failed to bootstrap connection to raft cluster: %w", err)
 	}
 
+	//TODO why is monitorConnection not used???
+
 	return rc, nil
 }
 

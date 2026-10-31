@@ -176,6 +176,7 @@ func healthChecks(ctx context.Context) error {
 		scheduler.HealthRuleUnresponsive(),
 		scheduler.HealthRuleTimedOut(),
 		scheduler.HealthRuleExceededJobLimits(),
+		scheduler.HealthRuleNoMoreJobs(),
 	}
 
 	for {

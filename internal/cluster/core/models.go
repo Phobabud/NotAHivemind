@@ -28,15 +28,16 @@ func NewJob(id string, image *Image, priority int, payload json.RawMessage) *Job
 }
 
 type Image struct {
-	Alias            string   `json:"alias"`
-	ImageName        string   `json:"image_name"`
-	Volumes          []Volume `json:"volumes"`
-	Args             []string `json:"args"`
-	NanoCPULimit     int64    `json:"NanoCPULimit"`     // Bytes, 0 for unlimited
-	MemoryBytesLimit int64    `json:"memoryBytesLimit"` // 1 CPU = 1,000,000,000 NanoCPUs
-	Persistent       bool     `json:"persistent"`       // Does the program run continuously (true, no monitoring for results), or handles specific jobs (false)
-	MaxJobs          int      `json:"max_jobs"`         // How many jobs can the program run before being recycled?
-	Timeout          int      `json:"timeout"`          // In seconds. Ignored if persistent is true
+	Alias            string            `json:"alias"`
+	ImageName        string            `json:"image_name"`
+	Volumes          []Volume          `json:"volumes"`
+	Args             []string          `json:"args"`
+	NanoCPULimit     int64             `json:"NanoCPULimit"`     // Bytes, 0 for unlimited
+	MemoryBytesLimit int64             `json:"memoryBytesLimit"` // 1 CPU = 1,000,000,000 NanoCPUs
+	Persistent       bool              `json:"persistent"`       // Does the program run continuously (true, no monitoring for results), or handles specific jobs (false)
+	Ports            map[string]string `json:"ports"`            // List of ports the docker requires as well as their user-defined IDs. If empty, no ports are exposed back to the client
+	MaxJobs          int               `json:"max_jobs"`         // How many jobs can the program run before being recycled?
+	Timeout          int               `json:"timeout"`          // In seconds. Ignored if persistent is true
 }
 
 type Volume struct {

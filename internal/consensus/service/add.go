@@ -47,6 +47,7 @@ func (n *Node) AddLog(ctx context.Context) {
 		}
 
 		leaderID := n.state.ID()
+		totalNodes := len(n.peerNodes) + 1
 		peers := make([]core.PeerState, 0, len(n.peerNodes))
 		for _, peer := range n.peerNodes {
 			if peer.Connection() {
@@ -66,7 +67,6 @@ func (n *Node) AddLog(ctx context.Context) {
 			Payload:      req.Payload,
 		}
 
-		totalNodes := len(peers) + 1
 		majorityNeeded := (totalNodes / 2) + 1
 		var successfulAcks int64 = 1
 
@@ -74,8 +74,53 @@ func (n *Node) AddLog(ctx context.Context) {
 		var once sync.Once
 		quorumReached := make(chan struct{}, 1)
 
+		// Handle single-node cluster edge case immediately
+		if int(successfulAcks) >= majorityNeeded {
+			once.Do(func() { close(quorumReached) })
+		}
+
 		for _, peer := range peers {
 			wg.Add(1)
+
+			// If a peer is in activeCatchup, we MUST wait for its catchup routine to reach nextIdx
+			// rather than skipping it immediately. Skipping it causes wg.Wait() to finish in 0ms,
+			// which fails quorum instantly and bloats the leader's local log with thousands of un-replicated entries!
+			if _, catchingUp := activeCatchup.Load(peer.ID()); catchingUp {
+				go func(p core.PeerState) {
+					defer wg.Done()
+
+					// Send a quick heartbeat so its election timer resets while it catches up
+					hbCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+					_, _ = p.Client().AppendEntries(hbCtx, &pb.AppendRequest{
+						OriginNodeId: leaderID,
+						Term:         currentTerm,
+						Index:        0,
+					})
+					cancel()
+
+					// Wait up to the RPC timeout for the background catchup loop to finish
+					// (which means it caught up to leaderLastIndex >= nextIdx)
+					timeout := time.After(2 * time.Second)
+					ticker := time.NewTicker(10 * time.Millisecond)
+					defer ticker.Stop()
+
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-timeout:
+							return
+						case <-ticker.C:
+							if _, stillCatchingUp := activeCatchup.Load(p.ID()); !stillCatchingUp {
+								n.handleAppendSuccess(&successfulAcks, majorityNeeded, &once, quorumReached)
+								return
+							}
+						}
+					}
+				}(peer)
+				continue
+			}
+
 			go func(p core.PeerState) {
 				defer wg.Done()
 
@@ -85,6 +130,8 @@ func (n *Node) AddLog(ctx context.Context) {
 				resp, err := p.Client().AppendEntries(rpcCtx, appendRequest)
 				if err != nil {
 					glog.V(2).Infof("Failed to replicate to peer %s: %v", p.ID(), err)
+					// Trigger catchup on RPC failure so the peer doesn't silently miss this index
+					go n.resolvePeerLag(ctx, p, nextIdx, pb.AppendResponseStatus_APPEND_RESPONSE_BAD_PAYLOAD)
 					return
 				}
 
@@ -137,6 +184,9 @@ func (n *Node) resolvePeerLag(ctx context.Context, peer core.PeerState, failedIn
 	glog.V(1).Infof("Starting catchup loop for peer [%s] (index: %d, initial status: %d)", peerID, failedIndex, initialStatus)
 
 	targetIndex := failedIndex - 1
+	if targetIndex < 1 {
+		targetIndex = 1
+	}
 	status := initialStatus
 
 	for {
@@ -231,7 +281,13 @@ func (n *Node) resolvePeerLag(ctx context.Context, peer core.PeerState, failedIn
 
 			status = resp.Status
 			if status == pb.AppendResponseStatus_APPEND_RESPONSE_BAD_PAYLOAD {
-				targetIndex--
+				// If the follower reports where its log ends via PrevLogIndex, jump straight there
+				// instead of stepping backward 1 by 1 under heavy load.
+				if resp.PrevLogIndex >= 0 && resp.PrevLogIndex < targetIndex-1 {
+					targetIndex = resp.PrevLogIndex + 1
+				} else {
+					targetIndex--
+				}
 				if targetIndex < 1 {
 					glog.Warningf("Cannot roll back below index 1 for peer [%s]", peerID)
 					return

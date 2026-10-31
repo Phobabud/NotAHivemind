@@ -1,6 +1,7 @@
 package states
 
 import (
+	"NotAHiveMind/internal/arbiter"
 	"NotAHiveMind/internal/models"
 	"NotAHiveMind/internal/scheduler/core"
 	"context"
@@ -10,13 +11,14 @@ import (
 	"time"
 )
 
+// State is the central, thread-safe state machine for the Scheduler.
 type State struct {
 	id      string
 	address string
 
 	jobs map[string]*core.Job
 
-	unassignedJobs map[string]struct{}
+	unassignedJobs *arbiter.Queue[*core.Job]
 	assignedJobs   map[string]struct{}
 	completedJobs  map[string]struct{}
 	readJobs       map[string]time.Time
@@ -27,6 +29,7 @@ type State struct {
 	mu sync.RWMutex
 }
 
+// ClusterStats represents a transient snapshot of cluster health
 type ClusterStats struct {
 	ClusterID   string
 	CPUUsage    int64
@@ -36,17 +39,23 @@ type ClusterStats struct {
 	LastUpdated time.Time
 }
 
+// NewState initializes a new central state machine and configures the generalized queue.
 func NewState(id string, address string) *State {
 	return &State{
-		id:             id,
-		address:        address,
-		jobs:           make(map[string]*core.Job),
-		unassignedJobs: make(map[string]struct{}),
-		assignedJobs:   make(map[string]struct{}),
-		completedJobs:  make(map[string]struct{}),
-		readJobs:       make(map[string]time.Time),
-		clusters:       make(map[string]*ClusterState),
-		peers:          make([]*SchedulerState, 0),
+		id:      id,
+		address: address,
+		jobs:    make(map[string]*core.Job),
+		unassignedJobs: arbiter.NewQueue[*core.Job](
+			func(j *core.Job) string { return j.Id },
+			func(j *core.Job) int64 { return j.Priority },
+			func(j *core.Job) int64 { return j.CPURequirement },
+			func(j *core.Job) int64 { return j.MemoryRequirement },
+		),
+		assignedJobs:  make(map[string]struct{}),
+		completedJobs: make(map[string]struct{}),
+		readJobs:      make(map[string]time.Time),
+		clusters:      make(map[string]*ClusterState),
+		peers:         make([]*SchedulerState, 0),
 	}
 }
 
@@ -65,23 +74,44 @@ func (s *State) Address() string {
 func (s *State) AppendJob(job *core.Job) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	job.Status = models.Pending
 	s.jobs[job.Id] = job
-	s.unassignedJobs[job.Id] = struct{}{}
+	s.unassignedJobs.Push(job)
+}
+
+// NextPendingJob atomically pops the best fitting job from the queue and temporarily marks it
+// as "packing-in-progress" to prevent race conditions where jobs vanish into limbo.
+func (s *State) NextPendingJob(availCPU, availMem int64) (*core.Job, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	job, ok := s.unassignedJobs.PopBestFit(availCPU, availMem)
+	if !ok {
+		return nil, false
+	}
+
+	// Immediately lock it safely into the active pool
+	s.assignedJobs[job.Id] = struct{}{}
+	job.AssignedClusterId = "packing-in-progress"
+	job.Status = models.Running
+
+	return job, true
 }
 
 func (s *State) AssignJob(jobId string, clusterId string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.jobs[jobId]; !ok {
+	job, ok := s.jobs[jobId]
+	if !ok {
 		return fmt.Errorf("job with ID %s not found", jobId)
 	}
 
-	delete(s.unassignedJobs, jobId)
+	// Redundant but safe (in case it bypassed NextPendingJob)
+	s.unassignedJobs.RemoveByID(jobId)
 	s.assignedJobs[jobId] = struct{}{}
 
-	job := s.jobs[jobId]
 	job.AssignedClusterId = clusterId
 	job.Status = models.Running
 	return nil
@@ -91,31 +121,32 @@ func (s *State) CompleteJob(jobId string, result json.RawMessage, success bool) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.jobs[jobId]; !ok {
+	job, ok := s.jobs[jobId]
+	if !ok {
 		return fmt.Errorf("job with ID %s not found", jobId)
 	}
 
 	delete(s.assignedJobs, jobId)
-	delete(s.unassignedJobs, jobId)
+	s.unassignedJobs.RemoveByID(jobId)
 	s.completedJobs[jobId] = struct{}{}
 
-	job := s.jobs[jobId]
 	if success {
 		job.Status = models.Completed
 	} else {
 		job.Status = models.Failed
 	}
+
 	job.Response = result
-	s.jobs[jobId] = job
 	return nil
 }
 
-// UnassignJob rolls a job back to pending
+// UnassignJob cleanly rolls a job back to the pending queue and strips its assignment state.
 func (s *State) UnassignJob(jobId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.jobs[jobId]; !ok {
+	job, ok := s.jobs[jobId]
+	if !ok {
 		return
 	}
 
@@ -125,16 +156,16 @@ func (s *State) UnassignJob(jobId string) {
 
 	delete(s.assignedJobs, jobId)
 	delete(s.completedJobs, jobId)
-	s.unassignedJobs[jobId] = struct{}{}
 
-	job := s.jobs[jobId]
 	job.Status = models.Pending
 	job.Response = nil
 	job.AssignedClusterId = ""
-	s.jobs[jobId] = job
+
+	// Push back to the queue now that the properties are reset
+	s.unassignedJobs.Push(job)
 }
 
-// PurgeJob completely removes a job from memory
+// PurgeJob completely removes a job from all memory maps and the queue.
 func (s *State) PurgeJob(jobId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -144,7 +175,7 @@ func (s *State) PurgeJob(jobId string) {
 	}
 
 	delete(s.jobs, jobId)
-	delete(s.unassignedJobs, jobId)
+	s.unassignedJobs.RemoveByID(jobId)
 	delete(s.assignedJobs, jobId)
 	delete(s.completedJobs, jobId)
 	delete(s.readJobs, jobId)
@@ -154,7 +185,8 @@ func (s *State) JobsInCluster(clusterId string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var jobsInCluster []string
+	// Pre-allocating the max possible size prevents costly slice resizing
+	jobsInCluster := make([]string, 0, len(s.assignedJobs))
 	for id := range s.assignedJobs {
 		if job, ok := s.jobs[id]; ok && job.AssignedClusterId == clusterId {
 			jobsInCluster = append(jobsInCluster, id)
@@ -173,19 +205,15 @@ func (s *State) Job(jobId string) (*core.Job, error) {
 }
 
 func (s *State) PendingJobs() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var pendingJobs []string
-	for id := range s.unassignedJobs {
-		pendingJobs = append(pendingJobs, id)
-	}
-	return pendingJobs
+	// Delegated to the thread-safe O(N) map reader inside the queue
+	return s.unassignedJobs.IDs()
 }
 
 func (s *State) ActiveJobs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	var activeJobs []string
+
+	activeJobs := make([]string, 0, len(s.assignedJobs))
 	for id := range s.assignedJobs {
 		activeJobs = append(activeJobs, id)
 	}
@@ -195,16 +223,19 @@ func (s *State) ActiveJobs() []string {
 func (s *State) CompletedJobs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	var completedJobs []string
+
+	completedJobs := make([]string, 0, len(s.completedJobs))
 	for id := range s.completedJobs {
 		completedJobs = append(completedJobs, id)
 	}
 	return completedJobs
 }
 
+// QueueFreeCompletedJob marks a completed job as "read" so that it can be gracefully purged later.
 func (s *State) QueueFreeCompletedJob(jobId string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if _, ok := s.jobs[jobId]; !ok {
 		return fmt.Errorf("job with ID %s not found", jobId)
 	}
@@ -225,16 +256,18 @@ func (s *State) ClearCompletedJobs(ctx context.Context) {
 			return
 		case <-ticker.C:
 			removeList := make([]string, 0)
-			s.mu.Lock()
+
+			// Use RLock to prevent pausing the scheduler while we iterate the map
+			s.mu.RLock()
 			for jobId := range s.completedJobs {
-				// If we hit timeout, or we're starting to store way too many jobs, and we need to force-clear them
+				// If we hit timeout, or we're starting to store way too many jobs, force-clear them
 				if value, ok := s.readJobs[jobId]; ok && (time.Since(value) > 10*time.Second || len(s.completedJobs) > 100) {
 					removeList = append(removeList, jobId)
 				}
 			}
-			s.mu.Unlock()
+			s.mu.RUnlock()
 
-			// Don't hold locks
+			// Purge handles its own Write Locks individually, preventing a giant system stall
 			for _, jobId := range removeList {
 				s.PurgeJob(jobId)
 			}

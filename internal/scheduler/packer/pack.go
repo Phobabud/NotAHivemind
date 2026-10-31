@@ -37,8 +37,9 @@ func (p *Packer) Start(ctx context.Context) {
 }
 
 func (p *Packer) schedule(ctx context.Context) {
-	ticker := time.NewTicker(300 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -47,14 +48,16 @@ func (p *Packer) schedule(ctx context.Context) {
 		case <-ticker.C:
 			p.reallocateDeadClusterJobs(ctx)
 
-			p.processPendingJobs(ctx, 10) // Limit spamming clusters before they can update with new stats
+			// Limit spamming clusters before they can update with new stats
+			p.processPendingJobs(ctx, 50)
 		}
 	}
 }
 
 func (p *Packer) requestStates(ctx context.Context) {
-	ticker := time.NewTicker(150 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():

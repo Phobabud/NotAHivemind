@@ -8,7 +8,7 @@ import (
 	"github.com/golang/glog"
 )
 
-type HealthRule func(ctx context.Context, pool core.ContainerAPI, queue core.JobQueue) HealthAction
+type HealthRule func(ctx context.Context, pool core.ContainerAPI, queue core.JobQueue) (HealthAction, string)
 
 type HealthAction int
 
@@ -26,10 +26,10 @@ func RunHealthRule(ctx context.Context, pool core.ContainerPool, queue core.JobQ
 
 	if err := pool.ForEach(func(container core.ContainerAPI) error {
 		for _, rule := range actions {
-			action := rule(opCtx, container, queue)
+			action, name := rule(opCtx, container, queue)
 
 			if action == HealthDelete {
-				glog.V(3).Infof("Container [%s] failed a healthcheck with an action of Delete", container.Id())
+				glog.V(1).Infof("Container [%s] failed a healthcheck [%s] with an action of Delete", container.Id(), name)
 				if container.State() == core.Running {
 					_ = queue.MarkCompleted(container.JobID(), nil, false)
 				}
@@ -57,34 +57,43 @@ func RunHealthRule(ctx context.Context, pool core.ContainerPool, queue core.JobQ
 }
 
 func HealthRuleUnresponsive() HealthRule {
-	return func(ctx context.Context, container core.ContainerAPI, queue core.JobQueue) HealthAction {
+	return func(ctx context.Context, container core.ContainerAPI, queue core.JobQueue) (HealthAction, string) {
 		health, err := container.Health(ctx)
 		if err != nil || health == 0 || health == 1 || container.State() == core.Reserved {
-			return HealthContinue
+			return HealthContinue, "Unresponsive"
 		}
 
-		return HealthDelete
+		return HealthDelete, "Unresponsive"
 	}
 }
 
 func HealthRuleTimedOut() HealthRule {
-	return func(ctx context.Context, container core.ContainerAPI, queue core.JobQueue) HealthAction {
+	return func(ctx context.Context, container core.ContainerAPI, queue core.JobQueue) (HealthAction, string) {
 		if container.Image().Timeout <= 0 {
-			return HealthContinue
+			return HealthContinue, "TimedOut"
 		}
 
 		if container.TotalJobs() > 0 && container.State() == core.Free && time.Since(container.LastStateChange()) > time.Second*time.Duration(container.Image().Timeout) {
-			return HealthDelete
+			return HealthDelete, "TimedOut"
 		}
-		return HealthContinue
+		return HealthContinue, "TimedOut"
 	}
 }
 
 func HealthRuleExceededJobLimits() HealthRule {
-	return func(ctx context.Context, container core.ContainerAPI, queue core.JobQueue) HealthAction {
+	return func(ctx context.Context, container core.ContainerAPI, queue core.JobQueue) (HealthAction, string) {
 		if container.TotalJobs() > container.Image().MaxJobs && container.State() == core.Free {
-			return HealthDelete
+			return HealthDelete, "ExceededJobLimits"
 		}
-		return HealthContinue
+		return HealthContinue, "ExceededJobLimits"
+	}
+}
+
+func HealthRuleNoMoreJobs() HealthRule {
+	return func(ctx context.Context, container core.ContainerAPI, queue core.JobQueue) (HealthAction, string) {
+		if container.State() == core.Free && time.Since(container.LastStateChange()) < 5*time.Second && queue.PendingJobTypes()[container.Image().Alias] == 0 {
+			return HealthDelete, "NoMoreMatchingJobs"
+		}
+		return HealthContinue, "NoMoreMatchingJobs"
 	}
 }

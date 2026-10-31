@@ -116,19 +116,7 @@ func (c *RaftClient) CommitJob(ctx context.Context, schedulerID string, job *cor
 	reqID := models.NewJobID()
 	logContext := fmt.Sprintf("job %s", job.Id)
 
-	if err := c.commitPayload(ctx, schedulerID, reqID.String(), payload, logContext); err != nil {
-		return err
-	}
-
-	_, ok, err := c.FetchData(ctx, schedulerID, &schedulerID, &job.Id)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("failed to verify committed job %s from Raft", job.Id)
-	}
-
-	return nil
+	return c.commitPayload(ctx, schedulerID, reqID.String(), payload, logContext)
 }
 
 // FetchSchedulerEvent fetches and interprets the most recent scheduler event from Raft.
@@ -170,10 +158,5 @@ func (c *RaftClient) CommitSchedulerEvent(ctx context.Context, originSchedulerID
 	reqID := models.NewRequestID()
 	logContext := fmt.Sprintf("scheduler event '%s'", event)
 
-	if err := c.commitPayload(ctx, schedulerID, reqID.String(), payload, logContext); err != nil {
-		return err
-	}
-
-	_, err = c.FetchSchedulerEvent(ctx, originSchedulerID, schedulerID)
-	return err
+	return c.commitPayload(ctx, schedulerID, reqID.String(), payload, logContext)
 }

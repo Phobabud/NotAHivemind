@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"text/tabwriter"
 	"time"
 
 	"google.golang.org/grpc"
@@ -16,15 +19,30 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// schedStats acts as a thread-safe data container for our dashboard rows
+type schedStats struct {
+	addr      string
+	pending   int
+	running   int
+	completed int // Currently waiting for cleanup
+	cleanedUp int // Cumulative total of jobs cleaned up by this scheduler
+	total     int
+	err       error
+}
+
 func main() {
 	// Allow the user to specify configuration
 	targetsStr := flag.String("targets", "localhost:50050, localhost:50056", "Comma-separated list of scheduler addresses to connect to")
-	numJobs := flag.Int("jobs", 10000, "The number of test jobs to submit")
-	numWorkers := flag.Int("workers", 50, "The number of concurrent goroutines to spam the scheduler with")
+	numJobs := flag.Int("jobs", 1000, "The number of test jobs to submit")
+	numWorkers := flag.Int("workers", 10, "The number of concurrent goroutines to spam the scheduler with")
 	pollRate := flag.Int("poll-rate", 1, "Number of times per second to poll the ListJobs endpoint")
 	flag.Parse()
 
-	targetAddrs := strings.Split(*targetsStr, ",")
+	var targetAddrs []string
+	for _, addr := range strings.Split(*targetsStr, ",") {
+		targetAddrs = append(targetAddrs, strings.TrimSpace(addr))
+	}
+
 	log.Printf("Dialing %d schedulers to submit %d jobs using %d workers...", len(targetAddrs), *numJobs, *numWorkers)
 
 	// Set up connections to all provided servers
@@ -32,7 +50,6 @@ func main() {
 	var clients []pb.SchedulingCoordinationServiceClient
 
 	for _, addr := range targetAddrs {
-		addr = strings.TrimSpace(addr)
 		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			log.Fatalf("Did not connect to %s: %v", addr, err)
@@ -75,7 +92,7 @@ func main() {
 	var wg sync.WaitGroup
 	var submitErrors int32
 
-	// We'll use the first client for submission and polling
+	// We'll use the first client for submission
 	client := clients[0]
 
 	for w := 0; w < *numWorkers; w++ {
@@ -116,7 +133,7 @@ func main() {
 
 	log.Printf("Beginning polling of ListJobs at %d req/sec...", *pollRate)
 
-	// Ticker-based Polling of ListJobs---------------------------------------------------------------------------------
+	// Dashboard Polling------------------------------------------------------------------------------------------------
 	tickerInterval := time.Second / time.Duration(*pollRate)
 	ticker := time.NewTicker(tickerInterval)
 	defer ticker.Stop()
@@ -126,67 +143,110 @@ func main() {
 	var totalCleanedUp int32
 	var totalFailed atomic.Int64
 
+	// Array to track historical cleanups per scheduler index
+	cumulativeCleanedUp := make([]int32, len(clients))
+
+	// Start the clock!
+	startTime := time.Now()
+
 	for range ticker.C {
 		if atomic.LoadInt32(&totalCleanedUp) >= actualSubmitted {
 			break // All jobs reached a terminal state and were cleaned up!
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		listResp, err := client.ListJobs(ctx, &emptypb.Empty{})
-		cancel()
+		stats := make([]schedStats, len(clients))
+		var listWg sync.WaitGroup
 
-		if err != nil {
-			log.Printf("[Phase 2 Error] Failed to ListJobs: %v", err)
-			continue
-		}
+		// Fetch statuses from ALL schedulers concurrently
+		for i, c := range clients {
+			listWg.Add(1)
+			go func(idx int, cClient pb.SchedulingCoordinationServiceClient, addr string) {
+				defer listWg.Done()
 
-		// Calculate how many of our submitted jobs are in each state based on the ListJobs response
-		pendingCount := len(listResp.PendingJobId)
-		runningCount := len(listResp.RunningJobId)
-		completedCount := len(listResp.CompletedJobId)
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				listResp, err := cClient.ListJobs(ctx, &emptypb.Empty{})
+				cancel()
 
-		log.Printf("[LIVE DASHBOARD] Pending: %d | Running: %d | Completed (Waiting for Cleanup): %d | Total Jobs In System: %d | Cleaned Up: %d/%d | Failed: %d",
-			pendingCount, runningCount, completedCount, listResp.TotalJobs, atomic.LoadInt32(&totalCleanedUp), actualSubmitted, totalFailed.Load())
-
-		// Clean up completed jobs--------------------------------------------------------------------------------------
-		if len(listResp.CompletedJobId) > 0 {
-			var cleanupWg sync.WaitGroup
-
-			for _, jobID := range listResp.CompletedJobId {
-				// Only clean it up if it's one of OUR jobs, and we haven't already cleaned it up
-				if _, isOurs := activeJobIDs.Load(jobID); isOurs {
-					if _, alreadyCleaned := cleanedUpJobs.LoadOrStore(jobID, struct{}{}); !alreadyCleaned {
-						cleanupWg.Add(1)
-						go func(jid string) {
-							defer cleanupWg.Done()
-							statusCtx, statusCancel := context.WithTimeout(context.Background(), 2*time.Second)
-							statusResp, err := client.RequestJobStatus(statusCtx, &pb.JobStatusRequest{JobId: jid})
-							statusCancel()
-
-							if err != nil {
-								log.Printf("Failed to retrieve/cleanup completed job %s: %v", jid, err)
-								// If it failed, remove it from cleanedUpJobs so we try again next tick
-								cleanedUpJobs.Delete(jid)
-								return
-							}
-
-							if statusResp.Status != "Completed" && statusResp.Status != "Failed" {
-								log.Printf("Warning: Job %s was in Completed list but returned status %s", jid, statusResp.Status)
-							}
-
-							if !bytes.Equal(statusResp.Result, payload) {
-								totalFailed.Add(1)
-							}
-
-							atomic.AddInt32(&totalCleanedUp, 1)
-						}(jobID)
-					}
+				if err != nil {
+					stats[idx] = schedStats{addr: addr, err: err}
+					return
 				}
-			}
-			cleanupWg.Wait()
+
+				stats[idx] = schedStats{
+					addr:      addr,
+					pending:   len(listResp.PendingJobId),
+					running:   len(listResp.RunningJobId),
+					completed: len(listResp.CompletedJobId),
+					cleanedUp: int(atomic.LoadInt32(&cumulativeCleanedUp[idx])),
+					total:     int(listResp.TotalJobs),
+				}
+
+				// Clean up completed jobs that reside on THIS specific scheduler
+				if len(listResp.CompletedJobId) > 0 {
+					var cleanupWg sync.WaitGroup
+
+					for _, jobID := range listResp.CompletedJobId {
+						if _, isOurs := activeJobIDs.Load(jobID); isOurs {
+							if _, alreadyCleaned := cleanedUpJobs.LoadOrStore(jobID, struct{}{}); !alreadyCleaned {
+								cleanupWg.Add(1)
+								go func(jid string) {
+									defer cleanupWg.Done()
+									statusCtx, statusCancel := context.WithTimeout(context.Background(), 2*time.Second)
+
+									// Target the exact scheduler holding the completed state
+									statusResp, err := cClient.RequestJobStatus(statusCtx, &pb.JobStatusRequest{JobId: jid})
+									statusCancel()
+
+									if err != nil {
+										log.Printf("Failed to retrieve/cleanup completed job %s from %s: %v", jid, addr, err)
+										cleanedUpJobs.Delete(jid)
+										return
+									}
+
+									if statusResp.Status != "Completed" && statusResp.Status != "Failed" {
+										log.Printf("Warning: Job %s was in Completed list but returned status %s", jid, statusResp.Status)
+									}
+
+									if !bytes.Equal(statusResp.Result, payload) {
+										totalFailed.Add(1)
+									}
+
+									// Increment global and scheduler-specific cleanup trackers
+									atomic.AddInt32(&totalCleanedUp, 1)
+									atomic.AddInt32(&cumulativeCleanedUp[idx], 1)
+								}(jobID)
+							}
+						}
+					}
+					cleanupWg.Wait()
+				}
+			}(i, c, targetAddrs[i])
 		}
+
+		// Wait for all schedulers to return their telemetry and finish cleanup
+		listWg.Wait()
+
+		// Print the formatted table dashboard
+		elapsed := time.Since(startTime).Round(time.Second)
+		fmt.Printf("\n--- DASHBOARD (Elapsed: %v) ---\n", elapsed)
+		fmt.Printf("Overall Progress: Completed: %d/%d | Failed: %d\n", atomic.LoadInt32(&totalCleanedUp), actualSubmitted, totalFailed.Load())
+		fmt.Println("---------------------------------------------------------------------------------------------------------")
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', 0)
+		fmt.Fprintln(w, "SCHEDULER\tPENDING\tRUNNING\tWAITING CLEANUP\tCLEANED UP (TOTAL)\tACTIVE IN SYSTEM\tSTATUS\t")
+
+		for _, s := range stats {
+			statusText := "OK"
+			if s.err != nil {
+				statusText = fmt.Sprintf("ERR: %v", s.err)
+			}
+			fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%s\t\n", s.addr, s.pending, s.running, s.completed, s.cleanedUp, s.total, statusText)
+		}
+
+		w.Flush()
+		fmt.Println() // Add a newline of padding after the table
 	}
 
-	log.Printf("All %d jobs have been completed and cleaned up. Test finished.", actualSubmitted)
+	log.Printf("All %d jobs have been completed and cleaned up. Test finished in %v.", actualSubmitted, time.Since(startTime).Round(time.Second))
 	log.Printf("Total failed jobs: %d", totalFailed.Load())
 }

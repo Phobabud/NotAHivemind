@@ -11,7 +11,7 @@ type Job struct {
 	Status            models.Status
 	CPURequirement    int64
 	MemoryRequirement int64
-	Priority          int
+	Priority          int64
 	Payload           []byte
 	Response          []byte
 }
@@ -23,7 +23,7 @@ func (j *Job) CastFromGlobalModel(job models.JobPayload) {
 	j.Status = job.State
 	j.CPURequirement = job.CPURequirement
 	j.MemoryRequirement = job.MemoryRequirement
-	j.Priority = job.Priority
+	j.Priority = int64(job.Priority)
 	j.Payload = job.Payload
 	j.Response = nil
 }

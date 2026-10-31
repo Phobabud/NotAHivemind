@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"NotAHiveMind/internal/arbiter"
 	"NotAHiveMind/internal/cluster/core"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,7 @@ import (
 
 // Jobs implements core.JobQueue using highly optimized O(1) maps.
 type Jobs struct {
-	pending map[string]*core.Job
+	pending *arbiter.Queue[*core.Job]
 	active  map[string]*core.Job
 
 	Completed chan *core.Job
@@ -18,7 +19,11 @@ type Jobs struct {
 
 func CreateJobsQueue() *Jobs {
 	return &Jobs{
-		pending:   make(map[string]*core.Job),
+		pending: arbiter.NewQueue[*core.Job](
+			func(j *core.Job) string { return j.Id },
+			func(j *core.Job) int64 { return int64(j.Priority) },
+			func(j *core.Job) int64 { return j.Image.NanoCPULimit },
+			func(j *core.Job) int64 { return j.Image.MemoryBytesLimit }),
 		active:    make(map[string]*core.Job),
 		Completed: make(chan *core.Job, 1000),
 		mu:        new(sync.Mutex),
@@ -29,14 +34,11 @@ func (j *Jobs) AddJob(job *core.Job) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	if _, exists := j.pending[job.Id]; exists {
-		return core.ErrAlreadyPending
-	}
 	if _, exists := j.active[job.Id]; exists {
 		return core.ErrAlreadyRunning
 	}
 
-	j.pending[job.Id] = job
+	j.pending.Push(job) // If the job ID exists, it updates the data
 	return nil
 }
 
@@ -47,20 +49,17 @@ func (j *Jobs) RemoveJob(id string) error {
 	if _, ok := j.active[id]; ok {
 		return fmt.Errorf("job %s is already running and cannot be removed", id)
 	}
-	if _, ok := j.pending[id]; ok {
-		delete(j.pending, id)
-		return nil
-	}
+	j.pending.RemoveByID(id)
 
-	return fmt.Errorf("job %s does not exist", id)
+	return nil
 }
 
 func (j *Jobs) FindJob(id string) (*core.Job, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	if job, ok := j.pending[id]; ok {
-		return job, nil
+	if jobs := j.pending.PeekForHeuristic(func(job *core.Job) bool { return job.Id == id }); len(jobs) > 0 {
+		return jobs[0], nil
 	}
 	if job, ok := j.active[id]; ok {
 		return job, nil
@@ -72,12 +71,7 @@ func (j *Jobs) FindJob(id string) (*core.Job, error) {
 func (j *Jobs) PendingJobs() []*core.Job {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-
-	pendingJobs := make([]*core.Job, 0, len(j.pending))
-	for _, job := range j.pending {
-		pendingJobs = append(pendingJobs, job)
-	}
-	return pendingJobs
+	return j.pending.Items()
 }
 
 func (j *Jobs) ActiveJobs() []*core.Job {
@@ -91,16 +85,16 @@ func (j *Jobs) ActiveJobs() []*core.Job {
 	return activeJobs
 }
 
-func (j *Jobs) LenPending() int {
+func (j *Jobs) LenPending() int32 {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return len(j.pending)
+	return j.pending.Size()
 }
 
-func (j *Jobs) LenActive() int {
+func (j *Jobs) LenActive() int32 {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return len(j.active)
+	return int32(len(j.active))
 }
 
 func (j *Jobs) MarkRunning(id string, containerID string) error {
@@ -141,7 +135,7 @@ func (j *Jobs) RollbackJob(id string) error {
 	if job, ok := j.active[id]; ok {
 		delete(j.active, id)
 		job.AssignedContainerID = ""
-		j.pending[id] = job
+		j.pending.Push(job)
 		return nil
 	}
 
@@ -156,12 +150,12 @@ func (j *Jobs) ClearAllJobs() {
 	for _, job := range j.active {
 		toComplete = append(toComplete, job)
 	}
-	for _, job := range j.pending {
+	for _, job := range j.pending.Items() {
 		toComplete = append(toComplete, job)
 	}
 
 	j.active = make(map[string]*core.Job)
-	j.pending = make(map[string]*core.Job)
+	j.pending.Clear()
 	j.mu.Unlock()
 
 	for _, job := range toComplete {
@@ -191,7 +185,7 @@ func (j *Jobs) QueueUtilization() (int64, int64) {
 		cpuUsage += job.Image.NanoCPULimit
 		memUsage += job.Image.MemoryBytesLimit
 	}
-	for _, job := range j.pending {
+	for _, job := range j.pending.Items() {
 		cpuUsage += job.Image.NanoCPULimit
 		memUsage += job.Image.MemoryBytesLimit
 	}
@@ -211,6 +205,16 @@ func (j *Jobs) ActiveUtilization() (int64, int64) {
 	return cpuUsage, memUsage
 }
 
+func (j *Jobs) PendingJobTypes() map[string]int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	jobTypes := make(map[string]int)
+	for _, job := range j.pending.Items() {
+		jobTypes[job.Image.Alias]++
+	}
+	return jobTypes
+}
+
 func (j *Jobs) NextBestJob(freeContainerImageNames []string, freeCpus int64, freeMem int64) *core.Job {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -220,49 +224,34 @@ func (j *Jobs) NextBestJob(freeContainerImageNames []string, freeCpus int64, fre
 		freeMap[name] = true
 	}
 
-	var bestJob *core.Job
-	bestMatchesFree := false
+	homogenousJob, foundHomo := j.pending.PopBestFitHeuristic(freeCpus, freeMem, func(job *core.Job) bool {
+		return freeMap[job.Image.Alias]
+	})
 
-	for _, job := range j.pending {
-		if job.Image.MemoryBytesLimit > freeMem || job.Image.NanoCPULimit > freeCpus {
-			continue
-		}
+	highestPriorityJob, foundHigh := j.pending.PopBestFit(freeCpus, freeMem)
 
-		jobMatchesFree := freeMap[job.Image.Alias]
-
-		if bestJob == nil {
-			bestJob = job
-			bestMatchesFree = jobMatchesFree
-			continue
-		}
-
-		if job.Priority > bestJob.Priority {
-			bestJob = job
-			bestMatchesFree = jobMatchesFree
-			continue
-		}
-
-		// Tiebreaker
-		if job.Priority == bestJob.Priority {
-			if jobMatchesFree && !bestMatchesFree {
-				bestJob = job
-				bestMatchesFree = true
-				continue
+	if foundHigh {
+		// If highest priority beats or equals homogenous, return highest, put homogenous back
+		if !foundHomo || highestPriorityJob.Priority > homogenousJob.Priority {
+			if foundHomo {
+				j.pending.Push(homogenousJob)
 			}
 
-			if jobMatchesFree == bestMatchesFree {
-				if job.Image.MemoryBytesLimit > bestJob.Image.MemoryBytesLimit {
-					bestJob = job
-					bestMatchesFree = jobMatchesFree
-					continue
-				}
-			}
+			// Directly transition to active state under the existing lock
+			highestPriorityJob.AssignedContainerID = "packing-in-progress"
+			j.active[highestPriorityJob.Id] = highestPriorityJob
+			return highestPriorityJob
 		}
+
+		j.pending.Push(highestPriorityJob)
 	}
 
-	if bestJob != nil {
-		delete(j.pending, bestJob.Id)
-		j.active[bestJob.Id] = bestJob
+	if foundHomo {
+		// Directly transition to active state under the existing lock
+		homogenousJob.AssignedContainerID = "packing-in-progress"
+		j.active[homogenousJob.Id] = homogenousJob
+		return homogenousJob
 	}
-	return bestJob
+
+	return nil
 }

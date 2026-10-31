@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang/glog"
@@ -30,7 +31,7 @@ type Conn struct {
 	client pb.ClusterServiceClient
 	conn   *grpc.ClientConn
 
-	connected bool
+	connected atomic.Bool
 	cancel    context.CancelFunc
 }
 
@@ -49,7 +50,7 @@ func NewConn(ctx context.Context, nodeID, address string, state *states.State) (
 		state:     state, // Store the reference to the global state
 		client:    pb.NewClusterServiceClient(grpcConn),
 		conn:      grpcConn,
-		connected: false,
+		connected: atomic.Bool{},
 		cancel:    cancel,
 	}
 
@@ -88,16 +89,16 @@ func (c *Conn) monitorConnection(ctx context.Context) {
 
 		newState := c.conn.GetState()
 		if newState == connectivity.Ready {
-			if !c.connected {
+			if !c.connected.Load() {
 				glog.V(2).Infof("Connection to cluster %s restored/active: %s", c.nodeID, newState)
-				c.connected = true
+				c.connected.Store(true)
 			}
 		} else if newState == connectivity.Idle || newState == connectivity.TransientFailure {
 			c.conn.Connect()
 
-			if c.connected {
+			if c.connected.Load() {
 				glog.Warningf("Connection to cluster %s dropped/inactive: %s", c.nodeID, newState)
-				c.connected = false
+				c.connected.Store(false)
 			}
 		}
 	}
@@ -105,9 +106,7 @@ func (c *Conn) monitorConnection(ctx context.Context) {
 
 // Connection provides thread-safe access to the active connection state.
 func (c *Conn) Connection() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.connected
+	return c.connected.Load()
 }
 
 // FetchClusterStatus pulls the telemetry heartbeat from the cluster
@@ -150,7 +149,7 @@ func (c *Conn) DispatchJob(ctx context.Context, job *core.Job) (bool, error) {
 		RequiredNanoCpu:     job.CPURequirement,
 		RequiredMemoryBytes: job.MemoryRequirement,
 		ImageAlias:          job.ImageAlias,
-		Priority:            int64(job.Priority),
+		Priority:            job.Priority,
 		Payload:             job.Payload,
 	}
 

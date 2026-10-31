@@ -97,6 +97,35 @@ func (s *State) LeastUtilizedCluster(cpuReq, memReq int64) string {
 	return leastUsedID
 }
 
+func (s *State) AtMaximumCapacity(cpuReq, memReq int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var totalClustersCpu int64
+	var totalClustersMem int64
+	var canFitInSingleCluster bool
+
+	for _, cs := range s.clusters {
+		totalClustersCpu += cs.MaxCpu
+		totalClustersMem += cs.MaxMem
+
+		// Verify that at least one single cluster has the raw dimensions to handle this specific job
+		if cs.MaxCpu >= cpuReq && cs.MaxMem >= memReq {
+			canFitInSingleCluster = true
+		}
+	}
+
+	var totalPendingCpu int64
+	var totalPendingMem int64
+	for _, job := range s.unassignedJobs.Items() {
+		totalPendingCpu += job.CPURequirement
+		totalPendingMem += job.MemoryRequirement
+	}
+
+	// Reject if the queue size exceeds total group capacity, or if the job is too large for any single node
+	return totalPendingCpu > totalClustersCpu || totalPendingMem > totalClustersMem || !canFitInSingleCluster
+}
+
 func (s *State) StaleClusters(heartbeatTimeout time.Duration) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
